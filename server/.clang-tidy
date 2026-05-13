@@ -1,0 +1,29 @@
+---
+Checks: >
+  -*,
+  bugprone-posix-return,
+  bugprone-sizeof-expression,
+  cert-env33-c,
+  cert-err33-c,
+  clang-analyzer-core.NullDereference,
+  clang-analyzer-core.uninitialized.Assign,
+  clang-analyzer-security.insecureAPI.strcpy,
+  clang-analyzer-unix.API,
+  clang-analyzer-unix.Vfork,
+  readability-magic-numbers
+
+WarningsAsErrors: >
+  bugprone-posix-return,
+  bugprone-sizeof-expression,
+  cert-env33-c,
+  cert-err33-c,
+  clang-analyzer-core.NullDereference,
+  clang-analyzer-core.uninitialized.Assign,
+  clang-analyzer-security.insecureAPI.strcpy,
+  clang-analyzer-unix.API,
+  clang-analyzer-unix.Vfork,
+  readability-magic-numbers
+
+FormatStyle: none
+
+

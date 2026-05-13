@@ -1,0 +1,269 @@
+STRUCTURA CODULUI CLIENT — PIF (Parallel Image Filtering)
+==========================================================
+
+Aceasta este o descriere completa a modului in care este organizat codul
+clientului, cum interactioneaza cu serverul si cum are loc filtrarea imaginilor.
+
+─────────────────────────────────────────────────────────────────────────────
+1. FISIERELE PROIECTULUI
+─────────────────────────────────────────────────────────────────────────────
+
+  main.c      — Punctul de intrare. Orchestreaza toti pasii: config, connect,
+                handshake, filtrare, deconectare.
+
+  client.c    — Implementarea operatiilor de retea de nivel inalt:
+                connect, handshake, apply_filter, bye.
+
+  client.h    — Header-ul pentru client.c. Defineste API-ul vizibil din main.c.
+
+  proto.c     — Implementarea protocolului de comunicatie de nivel jos:
+                functii de citire/scriere pe socket (int, string, blob).
+
+  proto.h     — Header-ul pentru proto.c. Defineste structurile mesajelor
+                si prototipurile functiilor de protocol.
+
+  config.c    — Incarcarea configuratiei din 4 surse cu prioritate crescatoare:
+                defaults → variabile de mediu → fisier client.cfg → CLI.
+
+  config.h    — Header-ul pentru config.c. Defineste structura clientConfigType.
+
+  client.cfg  — Fisierul de configuratie (sintaxa libconfig). Contine adresa
+                serverului, portul, filtrul implicit, caile imaginilor.
+
+─────────────────────────────────────────────────────────────────────────────
+2. STRATURILE ARHITECTURII
+─────────────────────────────────────────────────────────────────────────────
+
+  [main.c]          ← orchestrare, fara logica proprie
+      |
+  [config.c]        ← incarcarea parametrilor de rulare
+      |
+  [client.c]        ← operatii de nivel inalt (connect, apply, bye)
+      |
+  [proto.c]         ← protocol: serializare/deserializare mesaje pe socket
+      |
+  [TCP socket]      ← transport
+      |
+  [Server]
+
+  Fiecare strat nu stie nimic despre cel de deasupra. proto.c nu stie ca
+  exista filtre — el doar trimite/primeste bytes. client.c nu stie ca
+  exista libconfig — primeste un pointer la struct deja completat.
+
+─────────────────────────────────────────────────────────────────────────────
+3. CONFIGURATIA (config.c / config.h)
+─────────────────────────────────────────────────────────────────────────────
+
+  Structura principala:
+
+    typedef struct clientConfig {
+        char host[64];          /* adresa serverului         */
+        int  port;              /* portul TCP                */
+        char filter_name[64];   /* "grayscale", "blur", etc. */
+        char input_path[256];   /* imaginea de intrare       */
+        char output_path[256];  /* unde salvam rezultatul    */
+        int  verbose;           /* flag -v                   */
+    } clientConfigType;
+
+  Ordinea de incarcare (fiecare sursa o suprascrie pe cea anterioara):
+
+    1. config_set_defaults()   → valori hardcodate (127.0.0.1:18081, grayscale)
+    2. config_load_env()       → PIF_SERVER_HOST, PIF_SERVER_PORT, PIF_FILTER,
+                                 PIF_INPUT, PIF_OUTPUT, PIF_VERBOSE
+    3. config_load_file()      → ./client.cfg (libconfig, non-fatal daca lipseste)
+    4. config_parse_args()     → -h <host> -p <port> -F <filtru> -i <in> -o <out> -v
+
+  Exemplu client.cfg:
+
+    server { host = "127.0.0.1"; port = 18081; }
+    client { filter_name = "grayscale"; input_path = "./input.jpg";
+             output_path = "./output.jpg"; }
+
+  CLI are prioritate maxima: ./pif-client -F blur -i poza.jpg -o out.jpg
+  suprascrie orice valoare din fisier sau din mediu.
+
+─────────────────────────────────────────────────────────────────────────────
+4. PROTOCOLUL DE MESAJE (proto.h / proto.c)
+─────────────────────────────────────────────────────────────────────────────
+
+  Toate mesajele incep cu un header de 12 bytes (3 x int de 4 bytes):
+
+    struct msgHeader {
+        int msgSize;    /* dimensiunea totala a mesajului */
+        int clientID;   /* ID-ul clientului in sesiune    */
+        int opID;       /* operatia ceruta                */
+    }
+
+  Valorile opID definite in proto.h:
+
+    OPR_CONNECT      = 0  → cere un clientID de la server
+    OPR_BYE          = 5  → inchide sesiunea
+    OPR_APPLY_FILTER = 6  → trimite imagine + filtru, primeste imaginea procesata
+
+  TIPURI DE MESAJE:
+
+    singleIntMsgType  = header (12B) + int (4B) = 16 bytes total
+    string            = singleIntMsgType(lungime) + bytes raw fara padding
+    blob (imagine)    = singleIntMsgType(dimensiune) + bytes raw fara padding
+
+  BYTE ORDER: Toate campurile numerice sunt convertite in network byte order
+  (big-endian) la trimitere cu htonl() si convertite inapoi cu ntohl()
+  la primire. Fara aceasta conversie, comunicatia intre arhitecturi
+  diferite (ex: x86 little-endian) ar produce valori gresite.
+
+  FUNCTIILE DE PROTOCOL:
+
+    peekMsgHeader(sock)          → citeste header-ul fara a-l consuma din buffer
+                                   (foloseste MSG_PEEK)
+    writeSingleInt(sock, h, i)   → trimite header + int
+    readSingleInt(sock, &m)      → primeste header + int
+    writeSingleString(sock, h, s)→ trimite header+lungime (ca int), apoi stringul raw
+    readSingleString(sock, &str) → primeste lungimea (int), aloca memorie, citeste stringul
+    writeBlob(sock, h, data, sz) → trimite dimensiunea (int), apoi bytes raw in bucla
+    readBlob(sock, &data, &size) → primeste dimensiunea, aloca memorie, citeste cu MSG_WAITALL
+
+  DE CE BUCLA IN writeBlob?
+  send() pe TCP nu garanteaza ca trimite toti bytes dintr-un singur apel —
+  buffer-ul kernel-ului se poate umple (mai ales pentru imagini de MB).
+  writeBlob foloseste o bucla while(total_sent < size) care continua pana
+  cand toti bytes sunt confirmati de kernel.
+
+  DE CE MSG_WAITALL IN readBlob?
+  recv() fara flaguri poate returna mai putini bytes decat ceruti (partial read).
+  MSG_WAITALL ii spune kernel-ului sa blocheze pana primeste EXACT size bytes.
+
+─────────────────────────────────────────────────────────────────────────────
+5. OPERATIILE CLIENTULUI (client.c / client.h)
+─────────────────────────────────────────────────────────────────────────────
+
+  client_connect(cfg)
+    → Creeaza socket TCP (PF_INET + SOCK_STREAM)
+    → Rezolva hostname-ul cu gethostbyname()
+    → Apeleaza connect() la server
+    → Returneaza file descriptor-ul socketului sau -1 la eroare
+
+  client_handshake(sock)
+    → Trimite un mesaj OPR_CONNECT cu clientID=0 (necunoscut)
+    → Serverul raspunde cu un clientID unic pentru aceasta sesiune
+    → Returneaza clientID-ul sau -1 la eroare
+    → Toate mesajele ulterioare vor folosi acest clientID in header
+
+  client_apply_filter(sock, clientID, filter_name, input_path, output_path)
+    1. Deschide fisierul de intrare, determina dimensiunea cu fseek/ftell
+    2. Citeste intreaga imagine in memorie cu fread (malloc de fsize bytes)
+    3. Trimite filtrul ca string: writeSingleString(sock, h, filter_name)
+       cu opID=OPR_APPLY_FILTER
+    4. Trimite imaginea ca blob: writeBlob(sock, h, img, fsize)
+       cu acelasi opID=OPR_APPLY_FILTER
+    5. Asteapta imaginea procesata: readBlob(sock, &result, &rsize)
+    6. Salveaza rezultatul pe disc cu fwrite
+    → Returneaza 0 la succes, -1 la orice eroare (cu eliberarea memoriei)
+
+  client_bye(sock, clientID)
+    → Trimite OPR_BYE cu clientID-ul sesiunii
+    → Serverul inchide conexiunea dupa ce primeste
+    → Nu asteapta raspuns
+
+─────────────────────────────────────────────────────────────────────────────
+6. FLUXUL COMPLET AL UNUI REQUEST DE FILTRARE
+─────────────────────────────────────────────────────────────────────────────
+
+  CLIENT                              SERVER
+  ───────────────────────────────────────────────────────────────────────
+  config_set_defaults()
+  config_load_env()
+  config_load_file("./client.cfg")
+  config_parse_args(argc, argv)
+       |
+  client_connect()
+       |──── TCP connect() ────────────────────────────────────────────►
+       |                                                [accept()]
+       |
+  client_handshake()
+       |──── OPR_CONNECT, clientID=0, writeSingleInt(0) ──────────────►
+       |◄─── OPR_CONNECT, clientID=42, readSingleInt ───────────────────
+       |
+  client_apply_filter()
+       |──── OPR_APPLY_FILTER, writeSingleString("grayscale") ─────────►
+       |──── OPR_APPLY_FILTER, writeBlob(image_bytes, 512000) ─────────►
+       |                                                [aplica filtrul]
+       |◄─── readBlob(result_bytes, 487000) ────────────────────────────
+       |
+  fwrite(result, output_path)
+       |
+  client_bye()
+       |──── OPR_BYE, writeSingleInt(0) ──────────────────────────────►
+       |                                                [close()]
+       |
+  close(sock)
+
+─────────────────────────────────────────────────────────────────────────────
+7. DETALII DE PROTOCOL PENTRU OPR_APPLY_FILTER
+─────────────────────────────────────────────────────────────────────────────
+
+  Clientul trimite DOUA mesaje secventiale cu acelasi opID=6:
+
+  Mesaj 1 — filtrul:
+    [header: msgSize=20, clientID=42, opID=6]  12 bytes
+    [int: 9]                                    4 bytes  (lungimea "grayscale")
+    [string: "grayscale"]                       9 bytes  (raw, fara null, fara padding)
+
+  Mesaj 2 — imaginea:
+    [header: msgSize=16, clientID=42, opID=6]  12 bytes
+    [int: 512000]                               4 bytes  (dimensiunea imaginii)
+    [bytes raw: ...]                       512000 bytes  (JPEG/PNG nemodificat)
+
+  Serverul trebuie sa citeasca in exact aceasta ordine:
+    1. peekMsgHeader() → vede OPR_APPLY_FILTER
+    2. readSingleString() → citeste filtrul
+    3. peekMsgHeader() (sau direct readSingleInt()) → citeste dimensiunea
+    4. recv() cu MSG_WAITALL → citeste imaginea raw
+
+  Raspunsul serverului:
+    [int: 487000]                               4 bytes  (dimensiunea rezultatului)
+    [bytes raw: ...]                       487000 bytes  (imaginea procesata)
+    SAU
+    [int: -1]                                   4 bytes  (eroare la procesare)
+
+─────────────────────────────────────────────────────────────────────────────
+8. GESTIONAREA ERORILOR
+─────────────────────────────────────────────────────────────────────────────
+
+  Toate functiile returneaza -1 la eroare si 0 (sau valoarea pozitiva relevanta)
+  la succes. Nicio functie nu apeleaza exit() — curatarea resurselor (close,
+  free) este responsabilitatea apelantului.
+
+  main.c foloseste un label "cleanup" cu goto pentru a centraliza eliberarea
+  resurselor indiferent de unde apare eroarea:
+
+    int sock = client_connect(...);
+    if (client_handshake(sock) < 0) goto cleanup;
+    if (client_apply_filter(...) < 0) goto cleanup;
+    if (client_bye(...) < 0) goto cleanup;
+    exit_code = EXIT_SUCCESS;
+  cleanup:
+    close(sock);
+    return exit_code;
+
+─────────────────────────────────────────────────────────────────────────────
+9. COMPILARE SI RULARE
+─────────────────────────────────────────────────────────────────────────────
+
+  Dependinta externa: libconfig-dev
+    sudo apt install libconfig-dev
+
+  Compilare manuala (fara Makefile):
+    gcc -std=c11 -Wall -o pif-client main.c client.c config.c proto.c -lconfig
+
+  Exemple de rulare:
+    # Cu toate valorile din client.cfg:
+    ./pif-client
+
+    # Suprascrie serverul si filtrul din CLI:
+    ./pif-client -h 192.168.1.10 -p 18081 -F blur -i poza.jpg -o out.jpg -v
+
+    # Prin variabile de mediu:
+    PIF_SERVER_HOST=192.168.1.10 PIF_FILTER=negate ./pif-client
+
+    # Fisier de config explicit:
+    ./pif-client -c /etc/pif/server.cfg -F edge

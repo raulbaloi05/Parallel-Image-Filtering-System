@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions name="pif"
+  targetNamespace="http://tempuri.org/ns.xsd"
+  xmlns:tns="http://tempuri.org/ns.xsd"
+  xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+  xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+  xmlns:ns="http://tempuri.org/ns.xsd"
+  xmlns:SOAP="http://schemas.xmlsoap.org/wsdl/soap/"
+  xmlns:HTTP="http://schemas.xmlsoap.org/wsdl/http/"
+  xmlns:MIME="http://schemas.xmlsoap.org/wsdl/mime/"
+  xmlns:DIME="http://schemas.xmlsoap.org/ws/2002/04/dime/wsdl/"
+  xmlns:WSDL="http://schemas.xmlsoap.org/wsdl/"
+  xmlns="http://schemas.xmlsoap.org/wsdl/">
+
+<types>
+
+  <schema targetNamespace="http://tempuri.org/ns.xsd"
+    xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
+    xmlns:SOAP-ENC="http://schemas.xmlsoap.org/soap/encoding/"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+    xmlns:ns="http://tempuri.org/ns.xsd"
+    xmlns="http://www.w3.org/2001/XMLSchema"
+    elementFormDefault="unqualified"
+    attributeFormDefault="unqualified">
+    <import namespace="http://schemas.xmlsoap.org/soap/encoding/"/>
+    <complexType name="byeRequest"><!-- ns__byeRequest -->
+          <sequence>
+            <element name="id" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__byeRequest::id -->
+          </sequence>
+    </complexType>
+    <complexType name="connect"><!-- ns__connect -->
+      <simpleContent>
+        <extension base="xsd:anyType">
+        </extension>
+      </simpleContent>
+    </complexType>
+    <!-- operation request element -->
+    <element name="connect">
+      <complexType>
+          <sequence>
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation response element -->
+    <element name="connectResponse">
+      <complexType>
+          <sequence>
+            <element name="connect" type="xsd:int" minOccurs="0" maxOccurs="1"/><!-- ns__connect::connect -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation request element -->
+    <element name="echo">
+      <complexType>
+          <sequence>
+            <element name="echoRequest" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__echo::echoRequest -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation response element -->
+    <element name="echoResponse">
+      <complexType>
+          <sequence>
+            <element name="echo" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__echo::echo -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation request element -->
+    <element name="applyFilter">
+      <complexType>
+          <sequence>
+            <element name="imageData" type="xsd:base64Binary" minOccurs="1" maxOccurs="1"/><!-- ns__applyFilter::imageData -->
+            <element name="filterType" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__applyFilter::filterType -->
+            <element name="processCount" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__applyFilter::processCount -->
+            <element name="clientId" type="xsd:int" minOccurs="0" maxOccurs="1"/><!-- ns__applyFilter::clientId -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation response element and type -->
+    <element name="applyFilterResponse" type="ns:applyFilterResponse"/>
+    <complexType name="applyFilterResponse">
+          <sequence>
+            <element name="imageData" type="xsd:base64Binary" minOccurs="1" maxOccurs="1"/><!-- ns__applyFilterResponse::imageData -->
+            <element name="processingTime" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__applyFilterResponse::processingTime -->
+          </sequence>
+    </complexType>
+    <!-- operation request element -->
+    <element name="bye">
+      <complexType>
+          <sequence>
+            <element name="byeRequest" type="ns:byeRequest" minOccurs="1" maxOccurs="1"/><!-- ns__bye::byeRequest -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation response element -->
+    <element name="byeResponse">
+      <complexType>
+          <sequence>
+            <element name="status" type="xsd:int" minOccurs="0" maxOccurs="1"/><!-- ns__bye::status -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation request element -->
+    <element name="serverInfo">
+      <complexType>
+          <sequence>
+            <element name="in" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__serverInfo::in -->
+          </sequence>
+      </complexType>
+    </element>
+    <!-- operation response element and type -->
+    <element name="serverInfoResponse" type="ns:serverInfoResponse"/>
+    <complexType name="serverInfoResponse">
+          <sequence>
+            <element name="clients" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__serverInfoResponse::clients -->
+            <element name="activeJobs" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__serverInfoResponse::activeJobs -->
+            <element name="uptime" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__serverInfoResponse::uptime -->
+            <element name="memory" type="xsd:string" minOccurs="0" maxOccurs="1"/><!-- ns__serverInfoResponse::memory -->
+            <element name="queueSize" type="xsd:int" minOccurs="1" maxOccurs="1"/><!-- ns__serverInfoResponse::queueSize -->
+          </sequence>
+    </complexType>
+  </schema>
+
+</types>
+
+<message name="connectRequest">
+  <part name="Body" element="ns:connect"/><!-- ns__connect::ns__connect -->
+</message>
+
+<message name="connectResponse">
+  <part name="Body" element="ns:connectResponse"/>
+</message>
+
+<message name="echoRequest">
+  <part name="Body" element="ns:echo"/><!-- ns__echo::ns__echo -->
+</message>
+
+<message name="echoResponse">
+  <part name="Body" element="ns:echoResponse"/>
+</message>
+
+<message name="applyFilter">
+  <part name="Body" element="ns:applyFilter"/><!-- ns__applyFilter::ns__applyFilter -->
+</message>
+
+<message name="applyFilterResponse">
+  <part name="Body" element="ns:applyFilterResponse"/><!-- ns__applyFilter::response -->
+</message>
+
+<message name="byeRequest">
+  <part name="Body" element="ns:bye"/><!-- ns__bye::ns__bye -->
+</message>
+
+<message name="byeResponse">
+  <part name="Body" element="ns:byeResponse"/>
+</message>
+
+<message name="serverInfo">
+  <part name="Body" element="ns:serverInfo"/><!-- ns__serverInfo::ns__serverInfo -->
+</message>
+
+<message name="serverInfoResponse">
+  <part name="Body" element="ns:serverInfoResponse"/><!-- ns__serverInfo::response -->
+</message>
+
+<portType name="pifPortType">
+  <operation name="connect">
+    <documentation>Service definition of function ns__connect</documentation>
+    <input message="tns:connectRequest"/>
+    <output message="tns:connectResponse"/>
+  </operation>
+  <operation name="echo">
+    <documentation>Service definition of function ns__echo</documentation>
+    <input message="tns:echoRequest"/>
+    <output message="tns:echoResponse"/>
+  </operation>
+  <operation name="applyFilter">
+    <documentation>Service definition of function ns__applyFilter</documentation>
+    <input message="tns:applyFilter"/>
+    <output message="tns:applyFilterResponse"/>
+  </operation>
+  <operation name="bye">
+    <documentation>Service definition of function ns__bye</documentation>
+    <input message="tns:byeRequest"/>
+    <output message="tns:byeResponse"/>
+  </operation>
+  <operation name="serverInfo">
+    <documentation>Service definition of function ns__serverInfo</documentation>
+    <input message="tns:serverInfo"/>
+    <output message="tns:serverInfoResponse"/>
+  </operation>
+</portType>
+
+<binding name="pif" type="tns:pifPortType">
+  <SOAP:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+  <operation name="connect">
+    <SOAP:operation soapAction=""/>
+    <input>
+          <SOAP:body use="literal" parts="Body"/>
+    </input>
+    <output>
+          <SOAP:body use="literal" parts="Body"/>
+    </output>
+  </operation>
+  <operation name="echo">
+    <SOAP:operation soapAction=""/>
+    <input>
+          <SOAP:body use="literal" parts="Body"/>
+    </input>
+    <output>
+          <SOAP:body use="literal" parts="Body"/>
+    </output>
+  </operation>
+  <operation name="applyFilter">
+    <SOAP:operation soapAction=""/>
+    <input>
+          <SOAP:body use="literal" parts="Body"/>
+    </input>
+    <output>
+          <SOAP:body use="literal" parts="Body"/>
+    </output>
+  </operation>
+  <operation name="bye">
+    <SOAP:operation soapAction=""/>
+    <input>
+          <SOAP:body use="literal" parts="Body"/>
+    </input>
+    <output>
+          <SOAP:body use="literal" parts="Body"/>
+    </output>
+  </operation>
+  <operation name="serverInfo">
+    <SOAP:operation soapAction=""/>
+    <input>
+          <SOAP:body use="literal" parts="Body"/>
+    </input>
+    <output>
+          <SOAP:body use="literal" parts="Body"/>
+    </output>
+  </operation>
+</binding>
+
+<service name="pif">
+  <documentation>gSOAP 2.8.91 generated service definition</documentation>
+  <port name="pif" binding="tns:pif">
+    <SOAP:address location="http://localhost:18082"/>
+  </port>
+</service>
+
+</definitions>
