@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PIF — Parallel Image Filtering</title>
+    <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="logo">PIF</span>
+            <span class="subtitle">Parallel Image Filtering — client web</span>
+        </div>
+        <div class="conn">
+            <input id="serverUrl" type="text" spellcheck="false"
+                   placeholder="http://localhost:18082" />
+            <button id="btnConnect" class="btn">Conectare</button>
+            <button id="btnBye" class="btn btn-ghost">Deconectare</button>
+            <button id="btnPing" class="btn btn-ghost">Ping</button>
+            <span class="status">
+                <span id="connDot" class="dot"></span>
+                <span id="connText">Deconectat</span>
+            </span>
+        </div>
+    </header>
+
+    <main class="layout">
+        <!-- Coloana stanga: upload + filtre + actiuni -->
+        <section class="panel controls">
+            <h2>1. Imagine</h2>
+            <div id="dropZone" class="dropzone">
+                <p>Trage o imagine aici sau <strong>click</strong> pentru a selecta</p>
+                <input id="fileInput" type="file" accept="image/*" hidden />
+            </div>
+
+            <h2>2. Filtru</h2>
+            <div id="filters" class="filters">
+                <button data-filter="grayscale" class="active">Grayscale</button>
+                <button data-filter="blur">Blur</button>
+                <button data-filter="sharpen">Sharpen</button>
+                <button data-filter="edge">Edge</button>
+                <button data-filter="negative">Negative</button>
+            </div>
+
+            <h2>3. Procesare</h2>
+            <div class="actions">
+                <button id="btnProcess" class="btn btn-primary" disabled>
+                    Proceseaza
+                </button>
+                <button id="btnDownload" class="btn" disabled>
+                    Descarca rezultatul
+                </button>
+            </div>
+
+            <h2>Status server</h2>
+            <div class="stats">
+                <div><span>Clienti activi</span><b id="statClients">—</b></div>
+                <div><span>Joburi active</span><b id="statJobs">—</b></div>
+                <div><span>Stare</span><b id="statStatus">—</b></div>
+                <div><span>Coada</span><b id="statQueue">—</b></div>
+            </div>
+        </section>
+
+        <!-- Coloana dreapta: previzualizare -->
+        <section class="panel previews">
+            <div class="preview">
+                <h3>Original</h3>
+                <div class="frame">
+                    <img id="inputPreview" alt="input" />
+                </div>
+                <p id="inputMeta" class="meta">—</p>
+            </div>
+            <div class="preview">
+                <h3>Rezultat</h3>
+                <div class="frame">
+                    <img id="outputPreview" alt="output" />
+                </div>
+                <p id="outputMeta" class="meta">—</p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="logbar">
+        <h3>Jurnal</h3>
+        <div id="log" class="log"></div>
+    </footer>
+
+    <script src="scripts/soap.js"></script>
+    <script src="scripts/app.js"></script>
+</body>
+</html>

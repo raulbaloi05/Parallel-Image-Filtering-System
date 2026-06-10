@@ -254,6 +254,36 @@ int ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__se
 }
 
 /*
+ * Suport CORS pentru clientul web (browser).
+ *
+ * Browserul ruleaza pagina pe alta origine (file:// sau http://localhost:PORT)
+ * fata de serverul SOAP (http://host:18082), deci cererile sunt "cross-origin".
+ * Un POST cu Content-Type text/xml declanseaza intai un request preflight OPTIONS;
+ * fara antetele Access-Control-Allow-* browserul blocheaza raspunsul.
+ *
+ * - cors_posthdr: adauga antetele CORS pe FIECARE raspuns HTTP. gSOAP apeleaza
+ *   fposthdr(soap, NULL, NULL) pentru a inchide blocul de antete; injectam exact
+ *   inainte de acel moment.
+ * - cors_options: raspunde la preflight-ul OPTIONS cu 200 OK + (prin posthdr) CORS.
+ */
+static int (*default_posthdr)(struct soap*, const char*, const char*) = NULL;
+
+static int cors_posthdr(struct soap *soap, const char *key, const char *val) {
+    if (key == NULL) { /* inchidere bloc antete -> injectam CORS aici */
+        default_posthdr(soap, "Access-Control-Allow-Origin", "*");
+        default_posthdr(soap, "Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+        default_posthdr(soap, "Access-Control-Allow-Headers", "Content-Type, SOAPAction");
+        default_posthdr(soap, "Access-Control-Max-Age", "86400");
+    }
+    return default_posthdr(soap, key, val);
+}
+
+static int cors_options(struct soap *soap) {
+    soap->keep_alive = 0;
+    return soap_send_empty_response(soap, 200); /* preflight OK, fara corp */
+}
+
+/*
  * Thread pentru a rula serverul SOAP
  * asculta pe portul dat in loop si asteapta conexiuni
  */
@@ -262,6 +292,11 @@ void* soap_main(void* arg) {
     struct soap soap;
     soap_init(&soap);
     soap.bind_flags = SO_REUSEADDR;
+
+    // activare CORS: pastram handlerul implicit si il impachetam
+    default_posthdr = soap.fposthdr;
+    soap.fposthdr = cors_posthdr;
+    soap.fopt = cors_options; // HTTP OPTIONS (preflight)
 
     printf("[SOAP Thread] Starting on port %d...\n", port);
 

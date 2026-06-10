@@ -1,0 +1,213 @@
+/* style.css — stilizarea clientului web PIF. Tema dark, fara dependinte. */
+
+:root {
+    --bg: #0e1116;
+    --panel: #171c24;
+    --panel-2: #1f2630;
+    --border: #2a3340;
+    --text: #e6edf3;
+    --muted: #8b97a7;
+    --accent: #4f8cff;
+    --accent-2: #2f6ae0;
+    --ok: #3fb950;
+    --err: #f85149;
+    --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* ---- Topbar ---- */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.logo {
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: 1px;
+    color: var(--accent);
+}
+.subtitle { color: var(--muted); font-size: 13px; }
+
+.conn { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conn input {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 8px;
+    width: 220px;
+    font-size: 13px;
+}
+.status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--err);
+    box-shadow: 0 0 6px var(--err);
+}
+.dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+
+/* ---- Butoane ---- */
+.btn {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background .15s, border-color .15s;
+}
+.btn:hover:not(:disabled) { border-color: var(--accent); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-primary { background: var(--accent-2); border-color: var(--accent); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: var(--accent); }
+.btn-ghost { background: transparent; }
+.btn.busy { position: relative; color: transparent; }
+.btn.busy::after {
+    content: ""; position: absolute; inset: 0; margin: auto;
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid #fff; border-top-color: transparent;
+    animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Layout principal ---- */
+.layout {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    padding: 16px 20px;
+}
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+}
+.panel h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    color: var(--muted);
+    margin: 18px 0 8px;
+}
+.panel h2:first-child { margin-top: 0; }
+
+/* ---- Dropzone ---- */
+.dropzone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px 12px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+}
+.dropzone:hover, .dropzone.drag {
+    border-color: var(--accent);
+    background: rgba(79, 140, 255, .07);
+}
+.dropzone p { margin: 0; font-size: 13px; }
+
+/* ---- Filtre ---- */
+.filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.filters button {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+}
+.filters button.active {
+    background: var(--accent-2);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+.actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* ---- Stats ---- */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stats div {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+}
+.stats span { font-size: 11px; color: var(--muted); }
+.stats b { font-size: 18px; }
+
+/* ---- Preview ---- */
+.previews { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.preview { display: flex; flex-direction: column; }
+.preview h3 { margin: 0 0 8px; font-size: 14px; }
+.frame {
+    flex: 1;
+    background:
+        linear-gradient(45deg, #1b212b 25%, transparent 25%) 0 0/20px 20px,
+        linear-gradient(-45deg, #1b212b 25%, transparent 25%) 0 10px/20px 20px,
+        linear-gradient(45deg, transparent 75%, #1b212b 75%) 10px -10px/20px 20px,
+        linear-gradient(-45deg, transparent 75%, #1b212b 75%) -10px 0/20px 20px,
+        var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+.frame img { max-width: 100%; max-height: 60vh; display: none; }
+.frame img.has-img { display: block; }
+.meta { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+
+/* ---- Log ---- */
+.logbar {
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    padding: 12px 20px;
+}
+.logbar h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; }
+.log {
+    font-family: "SF Mono", Consolas, monospace;
+    font-size: 12px;
+    max-height: 140px;
+    overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+}
+.log-line { padding: 1px 0; white-space: pre-wrap; }
+.log-info { color: var(--muted); }
+.log-ok   { color: var(--ok); }
+.log-err  { color: var(--err); }
+
+/* ---- Responsive ---- */
+@media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    .previews { grid-template-columns: 1fr; }
+}

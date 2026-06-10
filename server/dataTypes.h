@@ -22,6 +22,16 @@
 #define BAN_CLIENT 14
 #define ADMIN_TIMEOUT_DISCONNECT 15
 
+/* Tipuri de mesaj pentru protocolul binar TCP (clientul REMOTE / inet).
+ * Range separat (100+) fata de comenzile admin de mai sus pentru a evita coliziuni. */
+#define TCP_CONNECT       100 /* client -> server: cerere conectare */
+#define TCP_CONNECT_RESP  101 /* server -> client: raspuns cu client_id */
+#define TCP_APPLY_FILTER  102 /* client -> server: filtru + imagine */
+#define TCP_FILTER_RESP   103 /* server -> client: imagine procesata + timp */
+#define TCP_BYE           104 /* client -> server: deconectare */
+#define TCP_BYE_RESP      105 /* server -> client: confirmare deconectare */
+#define TCP_ERROR         106 /* server -> client: mesaj de eroare */
+
 #define UNIXSOCKET "/tmp/unixds"
 #define MAX_LOGS 256
 
@@ -99,5 +109,6 @@ typedef struct {
 // Thread function declarations
 void* unix_main(void* arg);
 void* soap_main(void* arg);
+void* tcp_main(void* arg);
 
 #endif
