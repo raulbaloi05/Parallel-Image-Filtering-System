@@ -89,7 +89,7 @@ long long current_timestamp() {
  * - genereaza un ID unic pentru noul client
  * - initializeaza info despre procesele clientului
  */
-int ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connectResponse *resp) {
+int __ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connectResponse *resp) {
     (void)req;
     
     // extrage IP-ul real al clientului din socket
@@ -142,7 +142,7 @@ int ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connect
 }
 
 // echo endpoint
-int ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse *resp) {
+int __ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse *resp) {
     resp->echo = soap_strdup(soap, req->echoRequest ? req->echoRequest : "");
     return SOAP_OK;
 }
@@ -154,7 +154,7 @@ int ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse 
  * - apeleaza process_image() pentru a modifica imaginea
  * - calculeaza timpul total de procesare si trimite raspunsul
  */
-int ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns__applyFilterResponse *resp) {
+int __ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns__applyFilterResponse *resp) {
     if (!req || !req->filterType || !req->imageData.__ptr) {
         return soap_receiver_fault(soap, "Bad Request", "Missing filter or image data");
     }
@@ -209,7 +209,7 @@ int ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns__
 }
 
 // endpoint pentru deconectare client
-int ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *resp) {
+int __ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *resp) {
     int id = (req->byeRequest != NULL) ? req->byeRequest->id : -1;
     
     pthread_mutex_lock(&state_mutex);
@@ -234,7 +234,7 @@ int ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *re
 }
 
 // endpoint pentru informatii de status (folosit pentru monitorizare / dashboard)
-int ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__serverInfoResponse *resp) {
+int __ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__serverInfoResponse *resp) {
     (void)req;
     
     pthread_mutex_lock(&state_mutex);
