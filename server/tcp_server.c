@@ -26,6 +26,7 @@
 
 #include "dataTypes.h"
 #include "processing.h"
+#include "jobs.h"
 
 #define TCP_PORT       18083
 #define TCP_BACKLOG    16
@@ -206,6 +207,88 @@ static void handle_tcp_conn(int fd, const char *peer_ip) {
             free(out);
             printf("[TCP] applyFilter '%s' client=%d %zu->%zu bytes in %d ms\n",
                    filter, cid, img_size, out_size, dt);
+        }
+        else if (req.type == TCP_SUBMIT_JOB) {
+            /* payload identic cu TCP_APPLY_FILTER:
+             * [int client_id][NAME_LEN filter][size_t img_size][img bytes]
+             * dar jobul intra in coada si raspunsul e doar tichetul */
+            if (req.size < sizeof(int) + MAX_FILTER_LEN + sizeof(size_t)) {
+                send_error(fd, "Bad submit payload");
+                break;
+            }
+            int cid;
+            char filter[MAX_FILTER_LEN];
+            size_t img_size;
+            if (recv_all(fd, &cid, sizeof(int)) < 0) break;
+            if (recv_all(fd, filter, MAX_FILTER_LEN) < 0) break;
+            filter[MAX_FILTER_LEN - 1] = '\0';
+            if (recv_all(fd, &img_size, sizeof(size_t)) < 0) break;
+
+            if (img_size == 0 || img_size > (size_t)1024 * 1024 * 1024) {
+                send_error(fd, "Invalid image size");
+                break;
+            }
+            unsigned char *img = (unsigned char*)malloc(img_size);
+            if (!img) {
+                send_error(fd, "OOM");
+                break;
+            }
+            if (recv_all(fd, img, img_size) < 0) {
+                free(img);
+                break;
+            }
+
+            int ticket = jobs_submit(img, img_size, filter, cid);
+            free(img); /* jobs_submit copiaza datele */
+            if (ticket < 0) {
+                send_error(fd, "Queue full");
+                continue;
+            }
+
+            Header resp = { TCP_SUBMIT_RESP, sizeof(int), 0 };
+            if (send_all(fd, &resp, sizeof(resp)) < 0) break;
+            if (send_all(fd, &ticket, sizeof(int)) < 0) break;
+            printf("[TCP] submitJob '%s' client=%d ticket=%d (%zu bytes)\n",
+                   filter, cid, ticket, img_size);
+        }
+        else if (req.type == TCP_JOB_STATUS) {
+            /* payload cerere: [int ticket]
+             * raspuns: Header.count = starea JOB_*;
+             *   DONE  -> payload [int ms][size_t out_size][bytes]
+             *   ERROR -> payload [mesaj eroare, NUL-terminat]
+             *   altfel payload gol */
+            if (req.size < sizeof(int)) {
+                send_error(fd, "Bad status payload");
+                break;
+            }
+            int ticket;
+            if (recv_all(fd, &ticket, sizeof(int)) < 0) break;
+
+            unsigned char *out = NULL;
+            size_t out_size = 0;
+            int ms = 0;
+            char errmsg[MESSAGE_LEN] = "";
+            int status = jobs_poll(ticket, &out, &out_size, &ms, errmsg, sizeof(errmsg));
+
+            if (status == JOB_DONE) {
+                size_t payload = sizeof(int) + sizeof(size_t) + out_size;
+                Header resp = { TCP_STATUS_RESP, payload, JOB_DONE };
+                if (send_all(fd, &resp, sizeof(resp)) < 0) { free(out); break; }
+                if (send_all(fd, &ms, sizeof(int)) < 0) { free(out); break; }
+                if (send_all(fd, &out_size, sizeof(size_t)) < 0) { free(out); break; }
+                if (send_all(fd, out, out_size) < 0) { free(out); break; }
+                free(out);
+                printf("[TCP] jobStatus ticket=%d DONE (%zu bytes, %d ms)\n",
+                       ticket, out_size, ms);
+            } else if (status == JOB_ERROR) {
+                size_t len = strlen(errmsg) + 1;
+                Header resp = { TCP_STATUS_RESP, len, JOB_ERROR };
+                if (send_all(fd, &resp, sizeof(resp)) < 0) break;
+                if (send_all(fd, errmsg, len) < 0) break;
+            } else {
+                Header resp = { TCP_STATUS_RESP, 0, status };
+                if (send_all(fd, &resp, sizeof(resp)) < 0) break;
+            }
         }
         else if (req.type == TCP_BYE) {
             int id;

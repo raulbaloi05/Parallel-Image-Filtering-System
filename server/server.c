@@ -27,6 +27,7 @@
 #include "soapH.h"              /* Utilizat pentru: struct soap, soap_init(), soap_bind(), soap_accept(), soap_serve(), soap_destroy(), soap_end(), soap_done(), soap_print_fault(), soap_receiver_fault(), soap_malloc(), soap_strdup(), SOAP_OK */
 #include "ns.nsmap"             /* Utilizat pentru: namespace-urile SOAP generate de gSOAP (necesar pentru soap_serve) */
 #include "processing.h"        /* Utilizat pentru: process_image() */
+#include "jobs.h"              /* Utilizat pentru: jobs_submit(), jobs_poll(), jobs_queue_size(), jobs_worker_main(), JOB_* */
 #include "dataTypes.h"         /* Utilizat pentru: ServerState, ClientInfo, ProcessInfo, Filter, LogEntry, SysInfo, ServerConfiguration, constante de tip mesaj, MAX_LOGS, FILTERNR, IP_LEN, STATUS_LEN, NAME_LEN, PROCESS_COUNT */
 #include <GraphicsMagick/magick/api.h> /* Utilizat pentru: InitializeMagick(), DestroyMagick() */
 #include <sys/time.h>          /* Utilizat pentru: gettimeofday(), struct timeval */
@@ -208,6 +209,81 @@ int __ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns
     }
 }
 
+/*
+ * Endpoint de procesare asincrona:
+ * - valideaza cererea si pune jobul in coada (jobs.c)
+ * - returneaza imediat un tichet, fara a astepta procesarea
+ * - clientul interogheaza apoi jobStatus pana cand jobul e gata
+ */
+int __ns__submitJob(struct soap *soap, struct _ns__submitJob *req, struct _ns__submitJobResponse *resp) {
+    if (!req || !req->filterType || !req->imageData.__ptr) {
+        return soap_receiver_fault(soap, "Bad Request", "Missing filter or image data");
+    }
+
+    int client_id = (req->clientId) ? *req->clientId : -1;
+    int ticket = jobs_submit(req->imageData.__ptr, req->imageData.__size,
+                             req->filterType, client_id);
+    if (ticket < 0) {
+        log_entry("submitJob REFUZAT pentru client %d (coada plina)", client_id);
+        return soap_receiver_fault(soap, "Queue full", "Job queue is full, retry later");
+    }
+
+    printf("[Server] Job queued: ticket=%d filter='%s' client=%d\n",
+           ticket, req->filterType, client_id);
+    log_entry("Job acceptat: tichet=%d filtru='%s' client=%d", ticket, req->filterType, client_id);
+
+    resp->ticket = ticket;
+    return SOAP_OK;
+}
+
+/*
+ * Endpoint de polling dupa tichet:
+ * - PENDING/RUNNING: doar statusul, clientul reincearca
+ * - DONE: imaginea procesata + timpul; tichetul se invalideaza (one-shot)
+ * - ERROR: mesajul de eroare; tichetul se invalideaza
+ * - UNKNOWN: tichet inexistent sau rezultat deja ridicat
+ */
+int __ns__jobStatus(struct soap *soap, struct _ns__jobStatus *req, struct _ns__jobStatusResponse *resp) {
+    unsigned char *out = NULL;
+    size_t out_size = 0;
+    int ms = 0;
+    char err[MESSAGE_LEN] = "";
+
+    int status = jobs_poll(req->ticket, &out, &out_size, &ms, err, sizeof(err));
+
+    resp->imageData.__ptr = NULL;
+    resp->imageData.__size = 0;
+    resp->processingTime = 0;
+    resp->error = NULL;
+
+    switch (status) {
+    case JOB_PENDING:
+        resp->status = soap_strdup(soap, "PENDING");
+        break;
+    case JOB_RUNNING:
+        resp->status = soap_strdup(soap, "RUNNING");
+        break;
+    case JOB_DONE:
+        resp->status = soap_strdup(soap, "DONE");
+        resp->imageData.__ptr = (unsigned char *)soap_malloc(soap, out_size);
+        if (resp->imageData.__ptr) {
+            memcpy(resp->imageData.__ptr, out, out_size);
+            resp->imageData.__size = (int)out_size;
+        }
+        resp->processingTime = ms;
+        free(out);
+        break;
+    case JOB_ERROR:
+        resp->status = soap_strdup(soap, "ERROR");
+        resp->error = soap_strdup(soap, err);
+        break;
+    default:
+        resp->status = soap_strdup(soap, "UNKNOWN");
+        break;
+    }
+    return SOAP_OK;
+}
+
 // endpoint pentru deconectare client
 int __ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *resp) {
     int id = (req->byeRequest != NULL) ? req->byeRequest->id : -1;
@@ -248,40 +324,17 @@ int __ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__
     resp->activeJobs = active;
     resp->uptime = soap_strdup(soap, status);
     resp->memory = soap_strdup(soap, "Stable");
-    resp->queueSize = 0; // momentan nu folosim o coada propriu-zisa
+    resp->queueSize = jobs_queue_size();
     
     return SOAP_OK;
 }
 
 /*
- * Suport CORS pentru clientul web (browser).
- *
- * Browserul ruleaza pagina pe alta origine (file:// sau http://localhost:PORT)
- * fata de serverul SOAP (http://host:18082), deci cererile sunt "cross-origin".
- * Un POST cu Content-Type text/xml declanseaza intai un request preflight OPTIONS;
- * fara antetele Access-Control-Allow-* browserul blocheaza raspunsul.
- *
- * - cors_posthdr: adauga antetele CORS pe FIECARE raspuns HTTP. gSOAP apeleaza
- *   fposthdr(soap, NULL, NULL) pentru a inchide blocul de antete; injectam exact
- *   inainte de acel moment.
- * - cors_options: raspunde la preflight-ul OPTIONS cu 200 OK + (prin posthdr) CORS.
+ * CORS pentru clientul web: gSOAP >= 2.8.75 trateaza nativ preflight-ul
+ * OPTIONS si adauga Access-Control-Allow-* cand cererea are antetul Origin.
+ * NU adauga handlere custom de CORS aici — ar duplica antetele
+ * (Access-Control-Allow-Origin: "*, *") si browserul ar respinge raspunsul.
  */
-static int (*default_posthdr)(struct soap*, const char*, const char*) = NULL;
-
-static int cors_posthdr(struct soap *soap, const char *key, const char *val) {
-    if (key == NULL) { /* inchidere bloc antete -> injectam CORS aici */
-        default_posthdr(soap, "Access-Control-Allow-Origin", "*");
-        default_posthdr(soap, "Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-        default_posthdr(soap, "Access-Control-Allow-Headers", "Content-Type, SOAPAction");
-        default_posthdr(soap, "Access-Control-Max-Age", "86400");
-    }
-    return default_posthdr(soap, key, val);
-}
-
-static int cors_options(struct soap *soap) {
-    soap->keep_alive = 0;
-    return soap_send_empty_response(soap, 200); /* preflight OK, fara corp */
-}
 
 /*
  * Thread pentru a rula serverul SOAP
@@ -292,11 +345,6 @@ void* soap_main(void* arg) {
     struct soap soap;
     soap_init(&soap);
     soap.bind_flags = SO_REUSEADDR;
-
-    // activare CORS: pastram handlerul implicit si il impachetam
-    default_posthdr = soap.fposthdr;
-    soap.fposthdr = cors_posthdr;
-    soap.fopt = cors_options; // HTTP OPTIONS (preflight)
 
     printf("[SOAP Thread] Starting on port %d...\n", port);
 
@@ -366,7 +414,11 @@ int main(int argc, char **argv) {
     // pornire thread TCP raw pentru clientul REMOTE binar (transfer fisiere)
     pthread_create(&tcpthr, NULL, tcp_main, &tport);
 
-    printf("Server started with UNIX socket, SOAP and TCP threads\n");
+    // pornire worker pentru coada de joburi asincrone (tichete)
+    pthread_t jobsthr;
+    pthread_create(&jobsthr, NULL, jobs_worker_main, NULL);
+
+    printf("Server started with UNIX socket, SOAP, TCP and jobs threads\n");
 
     // rulam serverul SOAP pe thread-ul principal
     soap_main(&sport);

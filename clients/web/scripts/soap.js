@@ -107,7 +107,8 @@ const SOAP = (() => {
         return textOf(doc, 'echo');
     }
 
-    /* ns:applyFilter -> { imageBase64, processingTime } */
+    /* ns:applyFilter -> { imageBase64, processingTime } (sincron, pastrat
+     * pentru compatibilitate; fluxul curent foloseste submitJob + jobStatus) */
     async function applyFilter(imageBase64, filterType, clientId) {
         const body =
             '<ns1:applyFilter>' +
@@ -122,6 +123,36 @@ const SOAP = (() => {
         return {
             imageBase64: out,
             processingTime: parseInt(textOf(doc, 'processingTime') || '0', 10),
+        };
+    }
+
+    /* ns:submitJob -> ticket (int). Serverul pune jobul in coada si
+     * raspunde imediat; rezultatul se ridica prin jobStatus(ticket). */
+    async function submitJob(imageBase64, filterType, clientId) {
+        const body =
+            '<ns1:submitJob>' +
+            '<imageData>' + imageBase64 + '</imageData>' +
+            '<filterType>' + escapeXml(filterType) + '</filterType>' +
+            '<processCount>4</processCount>' +
+            '<clientId>' + (clientId | 0) + '</clientId>' +
+            '</ns1:submitJob>';
+        const doc = await call(body);
+        const ticket = parseInt(textOf(doc, 'ticket') || '0', 10);
+        if (!ticket) throw new Error('Serverul nu a returnat un tichet');
+        return ticket;
+    }
+
+    /* ns:jobStatus -> { status, imageBase64, processingTime, error }
+     * status: PENDING | RUNNING | DONE | ERROR | UNKNOWN */
+    async function jobStatus(ticket) {
+        const doc = await call(
+            '<ns1:jobStatus><ticket>' + (ticket | 0) + '</ticket></ns1:jobStatus>'
+        );
+        return {
+            status: textOf(doc, 'status') || 'UNKNOWN',
+            imageBase64: textOf(doc, 'imageData') || '',
+            processingTime: parseInt(textOf(doc, 'processingTime') || '0', 10),
+            error: textOf(doc, 'error') || '',
         };
     }
 
@@ -153,5 +184,5 @@ const SOAP = (() => {
             .replace(/>/g, '&gt;');
     }
 
-    return { config, connect, echo, applyFilter, bye, serverInfo };
+    return { config, connect, echo, applyFilter, submitJob, jobStatus, bye, serverInfo };
 })();

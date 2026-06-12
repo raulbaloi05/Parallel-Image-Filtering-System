@@ -302,6 +302,56 @@ struct _ns__applyFilter
     int*                                 clientId                       0;	///< Optional element.
 };
 
+/// @brief Top-level root element "http://tempuri.org/ns.xsd":submitJob
+/// @brief "http://tempuri.org/ns.xsd":submitJob is a complexType.
+///
+/// Cerere de procesare asincrona: serverul pune jobul in coada si returneaza
+/// imediat un tichet. Clientul interogheaza apoi jobStatus pana la finalizare.
+struct _ns__submitJob
+{
+/// Element "imageData" of type xs:base64Binary.
+    struct xsd__base64Binary             imageData                      1;	///< Required element.
+/// Element "filterType" of type xs:string.
+    char*                                filterType                     0;	///< Optional element.
+/// Element "processCount" of type xs:int.
+    int                                  processCount                   1;	///< Required element.
+/// Element "clientId" of type xs:int.
+    int*                                 clientId                       0;	///< Optional element.
+};
+
+/// @brief Top-level root element "http://tempuri.org/ns.xsd":submitJobResponse
+/// @brief "http://tempuri.org/ns.xsd":submitJobResponse is a complexType.
+struct _ns__submitJobResponse
+{
+/// Element "ticket" of type xs:int.
+    int                                  ticket                         1;	///< Required element.
+};
+
+/// @brief Top-level root element "http://tempuri.org/ns.xsd":jobStatus
+/// @brief "http://tempuri.org/ns.xsd":jobStatus is a complexType.
+///
+/// Interogare stare job dupa tichet. Cand status este "DONE" raspunsul
+/// contine imaginea procesata; tichetul devine apoi invalid (one-shot).
+struct _ns__jobStatus
+{
+/// Element "ticket" of type xs:int.
+    int                                  ticket                         1;	///< Required element.
+};
+
+/// @brief Top-level root element "http://tempuri.org/ns.xsd":jobStatusResponse
+/// @brief "http://tempuri.org/ns.xsd":jobStatusResponse is a complexType.
+struct _ns__jobStatusResponse
+{
+/// Element "status" of type xs:string. Valori: PENDING, RUNNING, DONE, ERROR, UNKNOWN.
+    char*                                status                         0;	///< Optional element.
+/// Element "imageData" of type xs:base64Binary (goala daca jobul nu e DONE).
+    struct xsd__base64Binary             imageData                      1;	///< Required element.
+/// Element "processingTime" of type xs:int.
+    int                                  processingTime                 1;	///< Required element.
+/// Element "error" of type xs:string.
+    char*                                error                          0;	///< Optional element.
+};
+
 /// @brief Top-level root element "http://tempuri.org/ns.xsd":bye
 /// @brief "http://tempuri.org/ns.xsd":bye is a complexType.
 ///
@@ -622,6 +672,50 @@ C server function (called from the service dispatcher defined in soapServer.c[pp
 int __ns__applyFilter(
     struct _ns__applyFilter*           ns__applyFilter,	///< Input parameter
     struct ns__applyFilterResponse    *ns__applyFilterResponse	///< Output parameter
+);
+
+/******************************************************************************\
+ *                                                                            *
+ * Service Operation                                                          *
+ *   __ns__submitJob                                                          *
+ *                                                                            *
+\******************************************************************************/
+
+/** Operation "__ns__submitJob" of service binding "pif".
+Trimite imaginea + filtrul; serverul o pune in coada de joburi si returneaza
+imediat un tichet, fara a astepta procesarea.
+*/
+
+//gsoap ns1  service method-protocol:	submitJob SOAP
+//gsoap ns1  service method-style:	submitJob document
+//gsoap ns1  service method-encoding:	submitJob literal
+//gsoap ns1  service method-action:	submitJob ""
+//gsoap ns1  service method-output-action:	submitJob Response
+int __ns__submitJob(
+    struct _ns__submitJob*             ns__submitJob,	///< Input parameter
+    struct _ns__submitJobResponse     *ns__submitJobResponse	///< Output parameter
+);
+
+/******************************************************************************\
+ *                                                                            *
+ * Service Operation                                                          *
+ *   __ns__jobStatus                                                          *
+ *                                                                            *
+\******************************************************************************/
+
+/** Operation "__ns__jobStatus" of service binding "pif".
+Interogheaza starea jobului dupa tichet (polling). Raspunsul contine statusul
+(PENDING/RUNNING/DONE/ERROR/UNKNOWN) si, cand este DONE, imaginea procesata.
+*/
+
+//gsoap ns1  service method-protocol:	jobStatus SOAP
+//gsoap ns1  service method-style:	jobStatus document
+//gsoap ns1  service method-encoding:	jobStatus literal
+//gsoap ns1  service method-action:	jobStatus ""
+//gsoap ns1  service method-output-action:	jobStatus Response
+int __ns__jobStatus(
+    struct _ns__jobStatus*             ns__jobStatus,	///< Input parameter
+    struct _ns__jobStatusResponse     *ns__jobStatusResponse	///< Output parameter
 );
 
 /******************************************************************************\

@@ -14,6 +14,7 @@ add_executable(pif_server
     processing.c
     unix_server.c
     tcp_server.c
+    jobs.c
 )
 
 target_include_directories(pif_server PRIVATE

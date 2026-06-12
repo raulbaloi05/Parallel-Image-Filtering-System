@@ -8,7 +8,9 @@
  * Expune urmatoarele operatii:
  * -- client_connect()      : trimite cererea SOAP ns:connect, primeste clientID;
  * -- client_apply_filter() : citeste imaginea de pe disc, o trimite la server
- *                            prin ns:applyFilter si salveaza rezultatul;
+ *                            prin ns:submitJob (primeste un tichet), apoi
+ *                            interogheaza ns:jobStatus pana la finalizare si
+ *                            salveaza rezultatul;
  * -- client_bye()          : trimite ns:bye pentru a inchide sesiunea pe server.
  *
  * Comunicarea foloseste stub-urile generate automat de gSOAP din pif.h
@@ -29,10 +31,13 @@
 
 #include <stdio.h>     /* Utilizat pentru: fopen(), fclose(), fseek(), ftell(), rewind(), fread(), fwrite(), fprintf(), stdout, stderr, SEEK_END */
 #include <stdlib.h>    /* Utilizat pentru: malloc(), free() */
-#include <string.h>    /* Utilizat pentru: memset() */
+#include <string.h>    /* Utilizat pentru: memset(), strcmp() */
+#include <unistd.h>    /* Utilizat pentru: usleep() */
 
-#define URL_BUF_LEN     128 /* Lungimea bufferului pentru URL-ul serverului (http://host:port) */
-#define PROCESS_WORKERS 4   /* Numarul de procese paralele folosite la procesarea imaginii pe server */
+#define URL_BUF_LEN      128 /* Lungimea bufferului pentru URL-ul serverului (http://host:port) */
+#define PROCESS_WORKERS  4   /* Numarul de procese paralele folosite la procesarea imaginii pe server */
+#define POLL_INTERVAL_MS 200 /* Pauza intre interogarile jobStatus */
+#define POLL_MAX_TRIES   600 /* ~2 minute pana la timeout */
 
 static void make_url(char *buf, size_t n, const clientConfigType *cfg)
 {
@@ -100,9 +105,9 @@ int client_apply_filter(struct soap *soap, const clientConfigType *cfg,
         fprintf(stdout, "[client] imagine incarcata: %s (%ld bytes)\n", input_path, fsize);
     }
 
-    /* Construim request-ul SOAP. */
-    struct _ns__applyFilter req;
-    struct ns__applyFilterResponse resp;
+    /* Pasul 1: trimitem jobul; serverul raspunde imediat cu un tichet. */
+    struct _ns__submitJob req;
+    struct _ns__submitJobResponse resp;
     memset(&req, 0, sizeof(req));
     memset(&resp, 0, sizeof(resp));
 
@@ -115,7 +120,7 @@ int client_apply_filter(struct soap *soap, const clientConfigType *cfg,
     req.processCount = PROCESS_WORKERS;
     req.clientId     = &client_id;
 
-    int rc = soap_call___ns__applyFilter(soap, url, NULL, &req, &resp);
+    int rc = soap_call___ns__submitJob(soap, url, NULL, &req, &resp);
     free(img);
     soap_closesock(soap);
 
@@ -123,7 +128,51 @@ int client_apply_filter(struct soap *soap, const clientConfigType *cfg,
         soap_print_fault(soap, stderr);
         return -2;  /* eroare retea/SOAP — reconectare necesara */
     }
-    if (resp.imageData.__ptr == NULL || resp.imageData.__size <= 0) {
+    int ticket = resp.ticket;
+    if (ticket <= 0) {
+        fprintf(stderr, "[client] server nu a returnat un tichet valid\n");
+        return -1;
+    }
+    fprintf(stdout, "[client] job trimis, tichet=%d, astept finalizarea...\n", ticket);
+
+    /* Pasul 2: interogam periodic starea jobului pana cand e gata. */
+    struct _ns__jobStatusResponse st;
+    int done = 0;
+    for (int tries = 0; tries < POLL_MAX_TRIES && !done; tries++) {
+        struct _ns__jobStatus q;
+        memset(&q, 0, sizeof(q));
+        memset(&st, 0, sizeof(st));
+        q.ticket = ticket;
+
+        rc = soap_call___ns__jobStatus(soap, url, NULL, &q, &st);
+        soap_closesock(soap);
+        if (rc != SOAP_OK) {
+            soap_print_fault(soap, stderr);
+            return -2;
+        }
+
+        const char *status = st.status ? st.status : "UNKNOWN";
+        if (strcmp(status, "DONE") == 0) {
+            done = 1;
+        } else if (strcmp(status, "ERROR") == 0) {
+            fprintf(stderr, "[client] procesare esuata: %s\n",
+                    st.error ? st.error : "eroare necunoscuta");
+            return -1;
+        } else if (strcmp(status, "UNKNOWN") == 0) {
+            fprintf(stderr, "[client] tichet necunoscut pe server\n");
+            return -1;
+        } else {
+            if (cfg->verbose) {
+                fprintf(stdout, "[client] tichet %d: %s\n", ticket, status);
+            }
+            usleep(POLL_INTERVAL_MS * 1000);
+        }
+    }
+    if (!done) {
+        fprintf(stderr, "[client] timeout in asteptarea jobului %d\n", ticket);
+        return -1;
+    }
+    if (st.imageData.__ptr == NULL || st.imageData.__size <= 0) {
         fprintf(stderr, "[client] server a returnat imagine goala\n");
         return -1;
     }
@@ -134,15 +183,15 @@ int client_apply_filter(struct soap *soap, const clientConfigType *cfg,
         fprintf(stderr, "[client] nu pot scrie: %s\n", output_path);
         return -1;
     }
-    if ((int)fwrite(resp.imageData.__ptr, 1, (size_t)resp.imageData.__size, fout)
-        != resp.imageData.__size) {
+    if ((int)fwrite(st.imageData.__ptr, 1, (size_t)st.imageData.__size, fout)
+        != st.imageData.__size) {
         fprintf(stderr, "[client] fwrite incomplet\n");
         fclose(fout); return -1;
     }
     fclose(fout);
 
     fprintf(stdout, "[client] rezultat salvat: %s (%d bytes, %d ms)\n",
-            output_path, resp.imageData.__size, resp.processingTime);
+            output_path, st.imageData.__size, st.processingTime);
     return 0;
 }
 

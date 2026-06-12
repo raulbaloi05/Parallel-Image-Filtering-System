@@ -23,8 +23,11 @@
 #include <sys/stat.h>
 
 #include "../../server/dataTypes.h"
+#include "../../server/jobs.h"   /* doar pentru starile JOB_* din protocol */
 
 #define MAX_FILTER_LEN NAME_LEN
+#define POLL_INTERVAL_MS 200     /* pauza intre interogarile de stare */
+#define POLL_MAX_TRIES   600     /* ~2 minute pana la timeout */
 
 static int send_all(int fd, const void *buf, size_t n) {
     const char *p = (const char*)buf;
@@ -115,15 +118,15 @@ static int op_connect(int fd, int *out_id) {
     return 0;
 }
 
-static int op_apply(int fd, int client_id, const char *filter,
-                    const unsigned char *img, size_t img_size,
-                    unsigned char **out, size_t *out_size, int *dt) {
+/* Trimite jobul la server; raspunsul imediat este tichetul din coada. */
+static int op_submit(int fd, int client_id, const char *filter,
+                     const unsigned char *img, size_t img_size, int *ticket) {
     char fbuf[MAX_FILTER_LEN];
     memset(fbuf, 0, sizeof(fbuf));
     strncpy(fbuf, filter, MAX_FILTER_LEN - 1);
 
     size_t payload = sizeof(int) + MAX_FILTER_LEN + sizeof(size_t) + img_size;
-    Header h = { TCP_APPLY_FILTER, payload, 0 };
+    Header h = { TCP_SUBMIT_JOB, payload, 0 };
     if (send_all(fd, &h, sizeof(h)) < 0) return -1;
     if (send_all(fd, &client_id, sizeof(int)) < 0) return -1;
     if (send_all(fd, fbuf, MAX_FILTER_LEN) < 0) return -1;
@@ -140,20 +143,56 @@ static int op_apply(int fd, int client_id, const char *filter,
         free(msg);
         return -1;
     }
-    if (r.type != TCP_FILTER_RESP) return -1;
-
-    int t;
-    size_t osz;
-    if (recv_all(fd, &t, sizeof(int)) < 0) return -1;
-    if (recv_all(fd, &osz, sizeof(size_t)) < 0) return -1;
-    unsigned char *buf = (unsigned char*)malloc(osz);
-    if (!buf) return -1;
-    if (recv_all(fd, buf, osz) < 0) { free(buf); return -1; }
-
-    *out = buf;
-    *out_size = osz;
-    *dt = t;
+    if (r.type != TCP_SUBMIT_RESP || r.size != sizeof(int)) return -1;
+    if (recv_all(fd, ticket, sizeof(int)) < 0) return -1;
     return 0;
+}
+
+/* O interogare de stare. Returneaza JOB_* sau -2 la eroare de comunicatie.
+ * La JOB_DONE umple out/out_size/dt; la JOB_ERROR afiseaza mesajul serverului. */
+static int op_poll(int fd, int ticket,
+                   unsigned char **out, size_t *out_size, int *dt) {
+    Header h = { TCP_JOB_STATUS, sizeof(int), 0 };
+    if (send_all(fd, &h, sizeof(h)) < 0) return -2;
+    if (send_all(fd, &ticket, sizeof(int)) < 0) return -2;
+
+    Header r;
+    if (recv_all(fd, &r, sizeof(r)) < 0) return -2;
+    if (r.type == TCP_ERROR) {
+        char *msg = (char*)malloc(r.size);
+        if (msg && recv_all(fd, msg, r.size) == 0) {
+            fprintf(stderr, "Server err: %s\n", msg);
+        }
+        free(msg);
+        return -2;
+    }
+    if (r.type != TCP_STATUS_RESP) return -2;
+
+    int status = r.count;
+    if (status == JOB_DONE) {
+        int t;
+        size_t osz;
+        if (recv_all(fd, &t, sizeof(int)) < 0) return -2;
+        if (recv_all(fd, &osz, sizeof(size_t)) < 0) return -2;
+        unsigned char *buf = (unsigned char*)malloc(osz);
+        if (!buf) return -2;
+        if (recv_all(fd, buf, osz) < 0) { free(buf); return -2; }
+        *out = buf;
+        *out_size = osz;
+        *dt = t;
+    } else if (status == JOB_ERROR) {
+        char *msg = (char*)malloc(r.size);
+        if (msg && recv_all(fd, msg, r.size) == 0) {
+            fprintf(stderr, "[client] Job esuat: %s\n", msg);
+        }
+        free(msg);
+    } else if (r.size > 0) {
+        /* payload neasteptat — il consumam ca sa nu deraiem stream-ul */
+        char *skip = (char*)malloc(r.size);
+        if (!skip || recv_all(fd, skip, r.size) < 0) { free(skip); return -2; }
+        free(skip);
+    }
+    return status;
 }
 
 static int op_bye(int fd, int client_id) {
@@ -200,11 +239,28 @@ int main(int argc, char **argv) {
     }
     printf("[client] Conectat. id=%d\n", client_id);
 
+    int ticket = -1;
+    if (op_submit(fd, client_id, filter, img, img_size, &ticket) < 0) {
+        fprintf(stderr, "submitJob esuat\n");
+        op_bye(fd, client_id);
+        close(fd); free(img); return 1;
+    }
+    printf("[client] Job trimis. Tichet=%d. Astept finalizarea...\n", ticket);
+
+    /* polling dupa tichet pana cand jobul e gata */
     unsigned char *out = NULL;
     size_t out_size = 0;
     int dt = 0;
-    if (op_apply(fd, client_id, filter, img, img_size, &out, &out_size, &dt) < 0) {
-        fprintf(stderr, "applyFilter esuat\n");
+    int status = JOB_PENDING;
+    for (int tries = 0; tries < POLL_MAX_TRIES; tries++) {
+        status = op_poll(fd, ticket, &out, &out_size, &dt);
+        if (status == JOB_DONE || status == JOB_ERROR ||
+            status == JOB_UNKNOWN || status == -2)
+            break;
+        usleep(POLL_INTERVAL_MS * 1000);
+    }
+    if (status != JOB_DONE) {
+        fprintf(stderr, "[client] Job neterminat (status=%d)\n", status);
         op_bye(fd, client_id);
         close(fd); free(img); return 1;
     }

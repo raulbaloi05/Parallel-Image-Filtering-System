@@ -160,14 +160,39 @@
         }
     }
 
+    /* Asteapta finalizarea jobului interogand periodic jobStatus (polling). */
+    const POLL_INTERVAL_MS = 250;
+    const POLL_MAX_TRIES = 480; // ~2 minute
+
+    async function waitForJob(ticket) {
+        let lastStatus = '';
+        for (let i = 0; i < POLL_MAX_TRIES; i++) {
+            const r = await SOAP.jobStatus(ticket);
+            if (r.status === 'DONE') return r;
+            if (r.status === 'ERROR')
+                throw new Error(r.error || 'procesarea a esuat pe server');
+            if (r.status === 'UNKNOWN')
+                throw new Error('tichet necunoscut pe server');
+            if (r.status !== lastStatus) {
+                lastStatus = r.status;
+                log('Tichet ' + ticket + ': ' + (r.status === 'RUNNING' ? 'in procesare' : 'in coada') + ' ...');
+            }
+            await new Promise((res) => setTimeout(res, POLL_INTERVAL_MS));
+        }
+        throw new Error('timeout in asteptarea jobului');
+    }
+
     async function doProcess() {
         if (!state.clientId || !state.inputBase64) return;
         els.btnProcess.disabled = true;
         els.btnProcess.classList.add('busy');
-        log('Aplicare filtru "' + state.filter + '" ...');
+        log('Trimit jobul cu filtrul "' + state.filter + '" ...');
         try {
-            const { imageBase64, processingTime } =
-                await SOAP.applyFilter(state.inputBase64, state.filter, state.clientId);
+            const ticket =
+                await SOAP.submitJob(state.inputBase64, state.filter, state.clientId);
+            log('Job acceptat. Tichet ' + ticket + ' — astept rezultatul ...');
+
+            const { imageBase64, processingTime } = await waitForJob(ticket);
 
             const bytes = base64ToBytes(imageBase64);
             const mime = sniffMime(bytes);

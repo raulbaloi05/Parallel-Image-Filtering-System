@@ -168,7 +168,7 @@ Interfață în terminal (ncurses) pentru monitorizare și control:
                       └─────────────────────────────────────┘
 ```
 
-- **3 thread-uri** în server: SOAP, TCP și UNIX socket; toate partajează `global_state`, protejat de un mutex.
+- **4 thread-uri** în server: SOAP, TCP, UNIX socket și worker-ul cozii de joburi; toate partajează `global_state`, protejat de un mutex.
 - **Clientul C** și **clientul web** vorbesc SOAP (XML peste HTTP). **Clientul TCP** folosește un protocol binar propriu — fără overhead base64, potrivit pentru imagini mari.
 - Serverul are suport **CORS** încorporat → clientul web funcționează direct din browser.
 
@@ -188,15 +188,41 @@ Funcția `process_image()` din `server/processing.c`:
 
 **De ce procese (`fork`) și nu thread-uri?** GraphicsMagick nu e thread-safe. Procesele au memorie separată — fiecare copil lucrează pe propria copie, fără corupere de date.
 
+### Procesarea asincronă (tichete + polling)
+
+Clienții **nu așteaptă blocant** rezultatul. Fluxul:
+
+```
+client                          server
+  │ submitJob(imagine, filtru)    │
+  │──────────────────────────────►│  pune jobul în coada FIFO
+  │◄────────── tichet ────────────│  răspunde imediat
+  │                               │
+  │ jobStatus(tichet)             │  (worker thread procesează în fundal)
+  │──────────────────────────────►│
+  │◄───────── PENDING ────────────│  clientul reîncearcă la ~200ms
+  │ jobStatus(tichet)             │
+  │──────────────────────────────►│
+  │◄── DONE + imagine + timp ─────│  tichetul devine invalid (one-shot)
+```
+
+Avantaj: serverul rămâne responsiv — o imagine mare în procesare nu blochează
+ceilalți clienți. Coada (`server/jobs.c`) are 32 de sloturi; `serverInfo`
+raportează mărimea ei în `queueSize`.
+
 ### Operațiile SOAP expuse
 
 | Operație | Rol |
 |----------|-----|
 | `connect` | Înregistrează clientul, returnează un ID unic (1–10000) |
 | `echo` | Ping / verificare server online |
-| `applyFilter` | Primește imagine + filtru, returnează imaginea procesată + timpul în ms |
+| `submitJob` | Primește imagine + filtru, pune jobul în coadă, returnează **tichet** |
+| `jobStatus` | Polling după tichet: PENDING / RUNNING / DONE (+imagine) / ERROR |
+| `applyFilter` | Varianta sincronă veche (păstrată pentru compatibilitate) |
 | `bye` | Deconectează clientul |
-| `serverInfo` | Statistici: clienți activi, status OPEN/CLOSED |
+| `serverInfo` | Statistici: clienți activi, status OPEN/CLOSED, mărimea cozii |
+
+Protocolul TCP binar are echivalentele `TCP_SUBMIT_JOB` / `TCP_JOB_STATUS`.
 
 > Codul SOAP (`soapC.c`, `soapServer.c`, `soapClient.c`) este **generat automat** de `soapcpp2` din `pif.h` — nu se modifică manual.
 
@@ -209,6 +235,7 @@ Funcția `process_image()` din `server/processing.c`:
 │   ├── server.c          # Serverul principal + endpoint-urile SOAP
 │   ├── tcp_server.c      # Serverul TCP binar (port 18083)
 │   ├── unix_server.c     # Socket UNIX pentru admin
+│   ├── jobs.c            # Coada FIFO de joburi cu tichete + worker thread
 │   ├── processing.c      # Procesarea paralelă a imaginilor (fork × 4)
 │   ├── admin.c           # Panoul de administrare (ncurses)
 │   ├── dataTypes.h       # Tipuri și constante comune

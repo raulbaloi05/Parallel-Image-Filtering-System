@@ -31,6 +31,10 @@
 #define TCP_BYE           104 /* client -> server: deconectare */
 #define TCP_BYE_RESP      105 /* server -> client: confirmare deconectare */
 #define TCP_ERROR         106 /* server -> client: mesaj de eroare */
+#define TCP_SUBMIT_JOB    107 /* client -> server: filtru + imagine, raspuns imediat cu tichet */
+#define TCP_SUBMIT_RESP   108 /* server -> client: tichetul jobului din coada */
+#define TCP_JOB_STATUS    109 /* client -> server: interogare stare job dupa tichet */
+#define TCP_STATUS_RESP   110 /* server -> client: stare job (count) + rezultat daca e DONE */
 
 #define UNIXSOCKET "/tmp/unixds"
 #define MAX_LOGS 256
