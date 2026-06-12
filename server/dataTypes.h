@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <time.h>
+#include <pthread.h>
 
 #define REQUEST_CLIENTS 0
 #define SEND_CLIENTS 1
@@ -34,6 +35,16 @@
 #define MESSAGE_LEN   256
 #define MAX_CLIENTS   100
 #define UPTIME_LEN    64
+
+// TCP Client Message Constants
+#define TCP_CONNECT 20
+#define TCP_CONNECT_RESP 21
+#define TCP_APPLY_FILTER 22
+#define TCP_FILTER_RESP 23
+#define TCP_BYE 24
+#define TCP_BYE_RESP 25
+#define TCP_ERROR 26
+#define MAX_QUEUE_SIZE 1024
 
 /* Headerul protocolului */
 typedef struct {
@@ -85,6 +96,29 @@ typedef struct {
     char uptime[UPTIME_LEN];
 } SysInfo;
 
+// job types
+typedef enum {
+    JOB_PENDING,
+    JOB_PROCESSING,
+    JOB_DONE,
+    JOB_FAILED
+} JobStatus;
+
+// Ticket
+typedef struct {
+    int ticket_id;
+    int client_id;
+    char filter[NAME_LEN];
+    
+    unsigned char *input_blob;
+    size_t in_size;
+    
+    unsigned char *output_blob;
+    size_t out_size;
+    
+    JobStatus status;
+} JobRecord;
+
 /* Global server state structure (replaces shared memory) */
 typedef struct {
     int active_clients_count;
@@ -94,10 +128,22 @@ typedef struct {
     time_t start_time;
     LogEntry logs[MAX_LOGS];
     int log_count;
+    
+    // FIFO Queue and Job Tracking
+    JobRecord jobs[MAX_QUEUE_SIZE];
+    int job_count;
+    
+    int queue[MAX_QUEUE_SIZE]; // Array of ticket_ids
+    int q_head;
+    int q_tail;
+    int q_size;
+    
+    pthread_cond_t q_cond; // Condition variable to wake the worker thread
 } ServerState;
 
 // Thread function declarations
 void* unix_main(void* arg);
 void* soap_main(void* arg);
+void* worker_main(void* arg);
 
 #endif

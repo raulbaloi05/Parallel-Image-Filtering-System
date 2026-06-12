@@ -178,21 +178,26 @@ struct ns__byeRequest
     int                                  id                             1;	///< Required element.
 };
 
-/// @brief "http://tempuri.org/ns.xsd":applyFilterResponse is a complexType.
-///
-/// @note struct ns__applyFilterResponse operations:
-/// - ns__applyFilterResponse* soap_new_ns__applyFilterResponse(struct soap*, int num) allocate and default initialize one or more values (an array)
-/// - soap_default_ns__applyFilterResponse(struct soap*, ns__applyFilterResponse*) default initialize members
-/// - int soap_read_ns__applyFilterResponse(struct soap*, ns__applyFilterResponse*) deserialize from a source
-/// - int soap_write_ns__applyFilterResponse(struct soap*, ns__applyFilterResponse*) serialize to a sink
-/// - ns__applyFilterResponse* soap_dup_ns__applyFilterResponse(struct soap*, ns__applyFilterResponse* dst, ns__applyFilterResponse *src) returns deep copy of ns__applyFilterResponse src into dst, copies the (cyclic) graph structure when a context is provided, or (cycle-pruned) tree structure with soap_set_mode(soap, SOAP_XML_TREE) (use soapcpp2 -Ec)
-/// - soap_del_ns__applyFilterResponse(ns__applyFilterResponse*) deep deletes ns__applyFilterResponse data members, use only on dst after soap_dup_ns__applyFilterResponse(NULL, ns__applyFilterResponse *dst, ns__applyFilterResponse *src) (use soapcpp2 -Ed)
 struct ns__applyFilterResponse
 {
+/// Element "ticketId" of type xs:int.
+    int                                  ticketId                       1;	///< Required element.
+};
+
+/// @brief Top-level root element "http://tempuri.org/ns.xsd":checkStatus
+struct _ns__checkStatus
+{
+/// Element "ticketId" of type xs:int.
+    int                                  ticketId                       1;	///< Required element.
+};
+
+/// @brief "http://tempuri.org/ns.xsd":checkStatusResponse is a complexType.
+struct ns__checkStatusResponse
+{
+/// Element "statusString" of type xs:string.
+    char* statusString                   1;	///< Required element.
 /// Element "imageData" of type xs:base64Binary.
-    struct xsd__base64Binary             imageData                      1;	///< Required element.
-/// Element "processingTime" of type xs:int.
-    int                                  processingTime                 1;	///< Required element.
+    struct xsd__base64Binary             imageData                      0;	///< Optional element.
 };
 
 /// @brief "http://tempuri.org/ns.xsd":serverInfoResponse is a complexType.
@@ -463,6 +468,22 @@ gSOAP 2.8.91 generated service definition
  *                                                                            *
 \******************************************************************************/
 
+/******************************************************************************\
+ * *
+ * Service Operation                                                          *
+ * __ns__checkStatus                                                        *
+ * *
+\******************************************************************************/
+
+//gsoap ns1  service method-protocol:	checkStatus SOAP
+//gsoap ns1  service method-style:	checkStatus document
+//gsoap ns1  service method-encoding:	checkStatus literal
+//gsoap ns1  service method-action:	checkStatus ""
+//gsoap ns1  service method-output-action:	checkStatus Response
+int __ns__checkStatus(
+    struct _ns__checkStatus* ns__checkStatus,
+    struct ns__checkStatusResponse    *ns__checkStatusResponse
+);
 
 /** Operation "__ns__connect" of service binding "pif".
 Service definition of function ns__connect

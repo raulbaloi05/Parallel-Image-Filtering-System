@@ -45,12 +45,13 @@
 #define TIMESTAMP_LEN       32    /* Lungimea bufferului pentru timestamp-ul din log ([HH:MM:SS] + text) */
 #define HALF_DIV            2     /* Impartitor pentru jumatate (folosit in calcule de layout) */
 
-// stare globala protejata de mutex (inlocuieste memoria partajata din versiunile vechi)
+// stare globala protejata de mutex
 pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
 ServerState global_state;
 
 // declaratie functie din unix_server.c pentru verificare IP-uri banate
 extern int is_ip_banned(const char *ip);
+void* tcp_main(void* arg);
 
 /*
  * adauga un mesaj in log-ul serverului
@@ -83,13 +84,105 @@ long long current_timestamp() {
     return te.tv_sec * 1000LL + te.tv_usec / 1000;
 }
 
+// background worker
+void* worker_main(void* arg) {
+    (void)arg;
+    printf("[Worker Thread] Started and waiting for jobs...\n");
+
+    while (1) {
+        pthread_mutex_lock(&state_mutex);
+        
+        while (global_state.q_size == 0) {
+            pthread_cond_wait(&global_state.q_cond, &state_mutex);
+        }
+        
+        int ticket_id = global_state.queue[global_state.q_head];
+        global_state.q_head = (global_state.q_head + 1) % MAX_QUEUE_SIZE;
+        global_state.q_size--;
+        
+        JobRecord *job = NULL;
+        ProcessInfo *client_procs = NULL;
+        char filter_name[NAME_LEN];
+
+        for (int i = 0; i < global_state.job_count; i++) {
+            if (global_state.jobs[i].ticket_id == ticket_id) {
+                job = &global_state.jobs[i];
+                job->status = JOB_PROCESSING;
+                strncpy(filter_name, job->filter, NAME_LEN - 1);
+                
+                for (int j = 0; j < global_state.active_clients_count; j++) {
+                    if (global_state.clients[j].job_id == job->client_id) {
+                        client_procs = global_state.clients[j].P;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
+        pthread_mutex_unlock(&state_mutex);
+
+        if (!job) continue;
+
+        // Read input file from disk
+        char in_path[128];
+        snprintf(in_path, sizeof(in_path), "/tmp/pif_in_%d.dat", ticket_id);
+        
+        FILE *in_file = fopen(in_path, "rb");
+        if (!in_file) {
+            pthread_mutex_lock(&state_mutex);
+            job->status = JOB_FAILED;
+            pthread_mutex_unlock(&state_mutex);
+            continue;
+        }
+
+        fseek(in_file, 0, SEEK_END);
+        size_t in_size = ftell(in_file);
+        fseek(in_file, 0, SEEK_SET);
+        unsigned char *in_blob = malloc(in_size);
+        fread(in_blob, 1, in_size, in_file);
+        fclose(in_file);
+
+        unsigned char *out_blob = NULL;
+        size_t out_size = 0;
+        
+        // Execute the GraphicsMagick operations
+        int res = process_image(in_blob, in_size, &out_blob, &out_size, filter_name, client_procs);
+        
+        free(in_blob);    // Clean up input heap memory
+        remove(in_path);  // Delete the input file from disk to save space
+
+        pthread_mutex_lock(&state_mutex);
+        if (res == 0 && out_blob != NULL) {
+            // Save result to disk
+            char out_path[128];
+            snprintf(out_path, sizeof(out_path), "/tmp/pif_out_%d.dat", ticket_id);
+            FILE *out_file = fopen(out_path, "wb");
+            if (out_file) {
+                fwrite(out_blob, 1, out_size, out_file);
+                fclose(out_file);
+                job->out_size = out_size;
+                job->status = JOB_DONE;
+                log_entry("Job %d completed successfully", ticket_id);
+            } else {
+                job->status = JOB_FAILED;
+            }
+            free(out_blob); // Clean up output heap memory
+        } else {
+            job->status = JOB_FAILED;
+            log_entry("Job %d failed during processing", ticket_id);
+        }
+        pthread_mutex_unlock(&state_mutex);
+    }
+    return NULL;
+}
+
 /*
  * Endpoint pentru conectare client:
  * - verifica daca serverul este deschis si daca are loc
  * - genereaza un ID unic pentru noul client
  * - initializeaza info despre procesele clientului
  */
-int ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connectResponse *resp) {
+int __ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connectResponse *resp) {
     (void)req;
     
     // extrage IP-ul real al clientului din socket
@@ -142,7 +235,7 @@ int ns__connect(struct soap *soap, struct _ns__connect *req, struct _ns__connect
 }
 
 // echo endpoint
-int ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse *resp) {
+int __ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse *resp) {
     resp->echo = soap_strdup(soap, req->echoRequest ? req->echoRequest : "");
     return SOAP_OK;
 }
@@ -154,62 +247,111 @@ int ns__echo(struct soap *soap, struct _ns__echo *req, struct _ns__echoResponse 
  * - apeleaza process_image() pentru a modifica imaginea
  * - calculeaza timpul total de procesare si trimite raspunsul
  */
-int ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns__applyFilterResponse *resp) {
+
+int __ns__applyFilter(struct soap *soap, struct _ns__applyFilter *req, struct ns__applyFilterResponse *resp) {
     if (!req || !req->filterType || !req->imageData.__ptr) {
         return soap_receiver_fault(soap, "Bad Request", "Missing filter or image data");
     }
     
     int client_id = (req->clientId) ? *req->clientId : -1;
+    int ticket_id = rand() % 1000000 + 1;
+
+    // Immediately save incoming image to disk
+    char in_path[128];
+    snprintf(in_path, sizeof(in_path), "/tmp/pif_in_%d.dat", ticket_id);
+    FILE *in_file = fopen(in_path, "wb");
+    if (!in_file) {
+        return soap_receiver_fault(soap, "Server Error", "Could not write image to disk");
+    }
+    fwrite(req->imageData.__ptr, 1, req->imageData.__size, in_file);
+    fclose(in_file);
 
     pthread_mutex_lock(&state_mutex);
-    // incrementare contor pentru filtrul folosit
+    if (global_state.q_size >= MAX_QUEUE_SIZE || global_state.job_count >= MAX_QUEUE_SIZE) {
+        pthread_mutex_unlock(&state_mutex);
+        remove(in_path); // Cleanup if queue is full
+        return soap_receiver_fault(soap, "Server Overloaded", "The processing queue is full.");
+    }
+
+    JobRecord *job = &global_state.jobs[global_state.job_count++];
+    job->ticket_id = ticket_id;
+    job->client_id = client_id;
+    strncpy(job->filter, req->filterType, NAME_LEN - 1);
+    job->out_size = 0;
+    job->status = JOB_PENDING;
+
+    global_state.queue[global_state.q_tail] = ticket_id;
+    global_state.q_tail = (global_state.q_tail + 1) % MAX_QUEUE_SIZE;
+    global_state.q_size++;
+
     for (int i = 0; i < FILTERNR; i++) {
         if (strcmp(global_state.filters[i].name, req->filterType) == 0) {
             global_state.filters[i].uses++;
             break;
         }
     }
+
+    pthread_cond_signal(&global_state.q_cond);
+    pthread_mutex_unlock(&state_mutex);
+
+    log_entry("Queued filter '%s' for client %d. Ticket: %d", req->filterType, client_id, ticket_id);
+    resp->ticketId = ticket_id; 
+    return SOAP_OK;
+}
+
+int __ns__checkStatus(struct soap *soap, struct _ns__checkStatus *req, struct ns__checkStatusResponse *resp) {
+    if (!req) return soap_receiver_fault(soap, "Bad Request", "Missing request");
     
-    // cautare client in lista pentru a-i trimite array-ul de procese in functia de baza
-    ProcessInfo *client_procs = NULL;
-    for (int i = 0; i < global_state.active_clients_count; i++) {
-        if (global_state.clients[i].job_id == client_id) {
-            client_procs = global_state.clients[i].P;
+    int ticket_id = req->ticketId;
+    JobRecord *found_job = NULL;
+
+    pthread_mutex_lock(&state_mutex);
+    for (int i = 0; i < global_state.job_count; i++) {
+        if (global_state.jobs[i].ticket_id == ticket_id) {
+            found_job = &global_state.jobs[i];
             break;
         }
     }
-    pthread_mutex_unlock(&state_mutex);
 
-    long long start_time = current_timestamp();
-    unsigned char *out_blob = NULL;
-    size_t out_size = 0;
-    
-    // aici are loc prelucrarea efectiva a imaginii folosind functia din processing.c
-    int res = process_image(req->imageData.__ptr, req->imageData.__size, &out_blob, &out_size, req->filterType, client_procs);
-    
-    if (res == 0 && out_blob != NULL) {
-        // copiere imagine rezultata in structura de raspuns SOAP
-        resp->imageData.__ptr = (unsigned char*)soap_malloc(soap, out_size);
-        memcpy(resp->imageData.__ptr, out_blob, out_size);
-        resp->imageData.__size = out_size;
-        
-        free(out_blob);
-        
-        // calculare si trimitere durata executie
-        resp->processingTime = (int)(current_timestamp() - start_time);
-        printf("[Server] Successfully processed in %d ms for client %d\n", resp->processingTime, client_id);
-        log_entry("Filter '%s' applied for client %d in %d ms", req->filterType, client_id, resp->processingTime);
-        return SOAP_OK;
-    } else {
-        // fail
-        printf("[Server] Processing failed for client %d!\n", client_id);
-        log_entry("Filter '%s' FAILED for client %d", req->filterType, client_id);
-        return soap_receiver_fault(soap, "Image processing failed", "GraphicsMagick error");
+    if (!found_job) {
+        pthread_mutex_unlock(&state_mutex);
+        return soap_receiver_fault(soap, "Not Found", "Invalid ticket ID");
     }
+
+    switch(found_job->status) {
+        case JOB_PENDING:
+            resp->statusString = soap_strdup(soap, "PENDING");
+            break;
+        case JOB_PROCESSING:
+            resp->statusString = soap_strdup(soap, "PROCESSING");
+            break;
+        case JOB_FAILED:
+            resp->statusString = soap_strdup(soap, "FAILED");
+            break;
+        case JOB_DONE:
+            resp->statusString = soap_strdup(soap, "DONE");
+            
+            char out_path[128];
+            snprintf(out_path, sizeof(out_path), "/tmp/pif_out_%d.dat", ticket_id);
+            FILE *out_file = fopen(out_path, "rb");
+            if (out_file) {
+                resp->imageData.__size = found_job->out_size;
+                resp->imageData.__ptr = (unsigned char*)soap_malloc(soap, found_job->out_size);
+                fread(resp->imageData.__ptr, 1, found_job->out_size, out_file);
+                fclose(out_file);
+                
+                // Optional: Delete the file once the client has retrieved it
+                remove(out_path);
+            }
+            break;
+    }
+    
+    pthread_mutex_unlock(&state_mutex);
+    return SOAP_OK;
 }
 
 // endpoint pentru deconectare client
-int ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *resp) {
+int __ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *resp) {
     int id = (req->byeRequest != NULL) ? req->byeRequest->id : -1;
     
     pthread_mutex_lock(&state_mutex);
@@ -234,7 +376,7 @@ int ns__bye(struct soap *soap, struct _ns__bye *req, struct _ns__byeResponse *re
 }
 
 // endpoint pentru informatii de status (folosit pentru monitorizare / dashboard)
-int ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__serverInfoResponse *resp) {
+int __ns__serverInfo(struct soap *soap, struct _ns__serverInfo *req, struct ns__serverInfoResponse *resp) {
     (void)req;
     
     pthread_mutex_lock(&state_mutex);
@@ -316,29 +458,37 @@ int main(int argc, char **argv) {
         global_state.filters[i].name[NAME_LEN - 1] = '\0';
         global_state.filters[i].uses = 0;
     }
+    
+    // INITIALIZE NEW QUEUE METRICS
+    global_state.job_count = 0;
+    global_state.q_head = 0;
+    global_state.q_tail = 0;
+    global_state.q_size = 0;
+    pthread_cond_init(&global_state.q_cond, NULL);
+    
     pthread_mutex_unlock(&state_mutex);
 
-    pthread_t unixthr, tcpthr;
+    pthread_t unixthr, tcpthr, workerthr;
     int sport = SOAP_PORT;
     int tport = 18083;
 
     // resetam socketul UNIX in caz ca exista deja pe disk
     unlink(UNIXSOCKET);
 
-    // pornire thread aditional pentru conexiuni pe UNIX socket (comunicare inter-proces locala)
+    // pornire thread-uri
     pthread_create(&unixthr, NULL, unix_main, (void*)UNIXSOCKET);
-
-    // pornire thread TCP raw pentru clientul REMOTE binar (transfer fisiere)
     pthread_create(&tcpthr, NULL, tcp_main, &tport);
+    pthread_create(&workerthr, NULL, worker_main, NULL);
 
-    printf("Server started with UNIX socket, SOAP and TCP threads\n");
-
-    // rulam serverul SOAP pe thread-ul principal
+    printf("Server started with UNIX socket, SOAP, TCP, and Worker threads\n");
     soap_main(&sport);
 
     pthread_join(unixthr, NULL);
     pthread_join(tcpthr, NULL);
 
+    // Cleanup resources
+    pthread_cond_destroy(&global_state.q_cond);
     DestroyMagick();
+    
     return 0;
 }
