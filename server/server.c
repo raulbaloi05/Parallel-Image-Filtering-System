@@ -46,7 +46,7 @@
 #define TIMESTAMP_LEN       32    /* Lungimea bufferului pentru timestamp-ul din log ([HH:MM:SS] + text) */
 #define HALF_DIV            2     /* Impartitor pentru jumatate (folosit in calcule de layout) */
 
-// stare globala protejata de mutex (inlocuieste memoria partajata din versiunile vechi)
+// stare globala protejata de mutex
 pthread_mutex_t state_mutex = PTHREAD_MUTEX_INITIALIZER;
 ServerState global_state;
 
@@ -369,7 +369,8 @@ void* soap_main(void* arg) {
         
         // cleanup resurse
         soap_destroy(&soap); 
-        soap_end(&soap);     
+        soap_end(&soap);
+
     }
 
     soap_done(&soap);
@@ -383,7 +384,7 @@ int main(int argc, char **argv) {
     setenv("OMP_NUM_THREADS", "1", 1);
     
     // initializare context GraphicsMagick
-    InitializeMagick(NULL);
+    ///InitializeMagick(NULL);
 
     // setare valori default in array global la pornire
     pthread_mutex_lock(&state_mutex);
@@ -426,6 +427,6 @@ int main(int argc, char **argv) {
     pthread_join(unixthr, NULL);
     pthread_join(tcpthr, NULL);
 
-    DestroyMagick();
+    ///DestroyMagick();
     return 0;
 }

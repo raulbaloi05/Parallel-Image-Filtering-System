@@ -41,6 +41,9 @@
 #define KB_PER_MB        1024   /* Kilobytes intr-un megabyte */
 #define CPU_PERCENT      100    /* Factor de scalare pentru calculul procentajului CPU */
 
+#include <pthread.h>           /* Utilizat pentru: pthread_t, pthread_mutex_t, pthread_mutex_lock(), pthread_mutex_unlock(), pthread_create(), pthread_join(), PTHREAD_MUTEX_INITIALIZER */
+
+extern pthread_rwlock_t fork_lock;
 
 /*UPDATE DIN NOU:
 * citire info despre un proces din /proc
@@ -106,132 +109,65 @@ static void read_proc_stats(pid_t pid, int *cpu_ms, int *ram_kb) {
 int process_image(const unsigned char *input, size_t in_size,
                   unsigned char **output, size_t *out_size,
                   const char *filter,
-                  ProcessInfo *proc_array) // nou
+                  ProcessInfo *proc_array) 
 {
-    // struct pentru erori (GraphicsMagick)
-    ExceptionInfo exception;
-    GetExceptionInfo(&exception);
-
-    // info despre imagine (format, etc)
-    ImageInfo *image_info = CloneImageInfo(NULL);
-
-    // citire imaginea din memorie (bytes -> Image)
-    Image *image = BlobToImage(image_info, input, in_size, &exception);
-    if (!image) {
-        CatchException(&exception);
-        DestroyImageInfo(image_info);
-        DestroyExceptionInfo(&exception);
-        return -1;
-    }
-
-    // dimensiuni imagine
-    unsigned long width = image->columns;
-    unsigned long height = image->rows;
-
-    // impartire imaginea in 4 (2x2)
-    unsigned long half_w = width / 2;
-    unsigned long half_h = height / 2;
-
-    // PID parinte (pentru fisiere temporare unice)
     pid_t parent_pid = getpid();
-
-    // vector pentru procesele copil
     pid_t pids[PROCESS_COUNT];
-
     struct timespec t_start;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
-    // paralelism (fork)
+    // FORK fara GraphicsMagick in parinte
     for (int i = 0; i < PROCESS_COUNT; i++) {
         pids[i] = fork();
 
-        // cod executat de copil
         if (pids[i] == 0) {
+            // Copilul isi creeaza propriul context GM izolat, independent de parinte
+            InitializeMagick(NULL);
+            ExceptionInfo child_ex;
+            GetExceptionInfo(&child_ex);
+            ImageInfo *child_info = CloneImageInfo(NULL);
 
-            // calculare pozitie bucata
-            unsigned long x = (i % 2) * half_w;
-            unsigned long y = (i / 2) * half_h;
+            Image *child_img = BlobToImage(child_info, input, in_size, &child_ex);
+            if (child_img) {
+                unsigned long half_w = child_img->columns / 2;
+                unsigned long half_h = child_img->rows / 2;
+                unsigned long x = (i % 2) * half_w;
+                unsigned long y = (i / 2) * half_h;
 
-            // definire zona de crop
-            RectangleInfo rect;
-            rect.x = x;
-            rect.y = y;
-            rect.width = half_w;
-            rect.height = half_h;
+                RectangleInfo rect = {half_w, half_h, x, y};
+                Image *part = CropImage(child_img, &rect, &child_ex);
 
-            // extragere bucata din imagine
-            Image *part = CropImage(image, &rect, &exception);
-
-            // aplicare filtrul
-            if (strcmp(filter, "grayscale") == 0) {
-                TransformColorspace(part, GRAYColorspace);
-            }
-            else if (strcmp(filter, "blur") == 0) {
-                Image *tmp = BlurImage(part, 0.0, 3.0, &exception);
-                if (tmp) part = tmp;
-            }
-            else if (strcmp(filter, "sharpen") == 0) {
-                Image *tmp = SharpenImage(part, 0.0, 2.0, &exception);
-                if (tmp) part = tmp;
-            }
-            else if (strcmp(filter, "edge") == 0) {
-                Image *tmp = EdgeImage(part, 1.0, &exception);
-                if (tmp) part = tmp;
-            }
-            else if (strcmp(filter, "negative") == 0) {
-                NegateImage(part, 0);
-            }
-            else if (strcmp(filter, "sepia") == 0) {
-                TransformColorspace(part, RGBColorspace);
-
-                PixelPacket *pixels = GetImagePixels(part, 0, 0,
-                                                     part->columns,
-                                                     part->rows);
-
-                if (pixels) {
-                    for (unsigned long py = 0; py < part->rows; py++) {
-                        for (unsigned long px = 0; px < part->columns; px++) {
-
-                            PixelPacket *p = &pixels[py * part->columns + px];
-
-                            double r = p->red;
-                            double g = p->green;
-                            double b = p->blue;
-
-                            p->red   = (Quantum)fmin(MaxRGB,
-                                        (0.393 * r + 0.769 * g + 0.189 * b));
-
-                            p->green = (Quantum)fmin(MaxRGB,
-                                        (0.349 * r + 0.686 * g + 0.168 * b));
-
-                            p->blue  = (Quantum)fmin(MaxRGB,
-                                        (0.272 * r + 0.534 * g + 0.131 * b));
-                        }
+                if (part) {
+                    // Aplicare filtre
+                    if (strcmp(filter, "grayscale") == 0) {
+                        TransformColorspace(part, GRAYColorspace);
+                    } else if (strcmp(filter, "blur") == 0) {
+                        Image *tmp = BlurImage(part, 0.0, 3.0, &child_ex);
+                        if (tmp) { DestroyImage(part); part = tmp; }
+                    } else if (strcmp(filter, "sharpen") == 0) {
+                        Image *tmp = SharpenImage(part, 0.0, 2.0, &child_ex);
+                        if (tmp) { DestroyImage(part); part = tmp; }
+                    } else if (strcmp(filter, "edge") == 0) {
+                        Image *tmp = EdgeImage(part, 1.0, &child_ex);
+                        if (tmp) { DestroyImage(part); part = tmp; }
+                    } else if (strcmp(filter, "negative") == 0) {
+                        NegateImage(part, 0);
                     }
 
-                    SyncImagePixels(part);
+                    char filename[FILENAME_BUF_LEN];
+                    snprintf(filename, sizeof(filename), "/tmp/part_%d_%d.png", parent_pid, i);
+                    snprintf(part->filename, sizeof(part->filename), "%s", filename);
+
+                    WriteImage(child_info, part);
+                    DestroyImage(part);
                 }
+                DestroyImage(child_img);
             }
-
-            else if (strcmp(filter, "emboss") == 0) {
-                Image *tmp = EmbossImage(part, 0.0, 1.0, &exception);
-                if (tmp) part = tmp;
-            }
-
-            // nume fisier temporar (unic)
-            char filename[FILENAME_BUF_LEN];
-            snprintf(filename, sizeof(filename), "/tmp/part_%d_%d.png", parent_pid, i);
-
-            // setare unde sa salveze imaginea
-            snprintf(part->filename, sizeof(part->filename), "%s", filename);
-
-            // scriere pe disk
-            WriteImage(image_info, part);
-
-            // eliberare memorie
-            DestroyImage(part);
-
-            // copilul se opreste aici (_exit evita atexit/GM cleanup pe mutex corupt)
+            DestroyImageInfo(child_info);
+            DestroyExceptionInfo(&child_ex);
+            
+            // Distrugem contextul GM al copilului inainte de _exit pentru a nu lasa thread-uri
+            DestroyMagick(); 
             _exit(0);
         }
         else {
@@ -244,83 +180,74 @@ int process_image(const unsigned char *input, size_t in_size,
         }
     }
 
-    // asteapta fiecare copil si citeste stats din /proc inainte de reap
+    // ASTEPTAM COPIII
     for (int i = 0; i < PROCESS_COUNT; i++) {
         int cpu_ms = 0, ram_mb = 0;
-        if (proc_array)
-            read_proc_stats(pids[i], &cpu_ms, &ram_mb);
+        if (pids[i] > 0) {
+            if (proc_array) read_proc_stats(pids[i], &cpu_ms, &ram_mb);
+            waitpid(pids[i], NULL, 0);
 
-        waitpid(pids[i], NULL, 0);
-
-        if (proc_array) {
-            struct timespec t_end;
-            clock_gettime(CLOCK_MONOTONIC, &t_end);
-            long wall_ms = (t_end.tv_sec - t_start.tv_sec) * MS_PER_SEC
-                         + (t_end.tv_nsec - t_start.tv_nsec) / (MS_PER_SEC * MS_PER_SEC);
-            proc_array[i].cpu = (wall_ms > 0) ? (int)(cpu_ms * CPU_PERCENT / wall_ms) : 0;
-            proc_array[i].ram = ram_mb;
-            snprintf(proc_array[i].status, sizeof(proc_array[i].status), "DONE");
+            if (proc_array) {
+                struct timespec t_end;
+                clock_gettime(CLOCK_MONOTONIC, &t_end);
+                long wall_ms = (t_end.tv_sec - t_start.tv_sec) * 1000 + 
+                               (t_end.tv_nsec - t_start.tv_nsec) / 1000000;
+                proc_array[i].cpu = (wall_ms > 0) ? (int)(cpu_ms * 100 / wall_ms) : 0;
+                proc_array[i].ram = ram_mb;
+                snprintf(proc_array[i].status, sizeof(proc_array[i].status), "DONE");
+            }
         }
     }
 
-    // imaginea finala (initial goala)
-    Image *result = CloneImage(image, width, height, 1, &exception);
+    // ASAMBLAM REZULTATUL
+    // Parintele initializeaza GM doar acum, cand `fork` nu mai este un pericol
+    InitializeMagick(NULL);
+    ExceptionInfo exception;
+    GetExceptionInfo(&exception);
+    ImageInfo *image_info = CloneImageInfo(NULL);
 
-    // reconstruire imagine din bucati
+    Image *result = BlobToImage(image_info, input, in_size, &exception);
+    if (!result) {
+        DestroyImageInfo(image_info);
+        DestroyExceptionInfo(&exception);
+        DestroyMagick();
+        return -1;
+    }
+
+    unsigned long half_w = result->columns / 2;
+    unsigned long half_h = result->rows / 2;
+
     for (int i = 0; i < PROCESS_COUNT; i++) {
         char filename[128];
         snprintf(filename, sizeof(filename), "/tmp/part_%d_%d.png", parent_pid, i);
-
-        // citire bucata de pe disk
         snprintf(image_info->filename, sizeof(image_info->filename), "%s", filename);
+        
         Image *part = ReadImage(image_info, &exception);
-
         if (part) {
             unsigned long x = (i % 2) * half_w;
             unsigned long y = (i / 2) * half_h;
-
-            // lipire bucata in imaginea finala
             CompositeImage(result, OverCompositeOp, part, x, y);
-
             DestroyImage(part);
-
-            // sterge fisierul temporar
             (void)remove(filename);
         }
     }
-    // aplicare filtre globale (NU pe bucati)
-    if (strcmp(filter, "flip") == 0) {
-        Image *tmp = FlipImage(result, &exception);
-        if (tmp) {
-            DestroyImage(result);
-            result = tmp;
-        }
+
+    // Conversie finala folosind MagickFree
+    unsigned char *magick_blob = ImageToBlob(image_info, result, out_size, &exception);
+    if (magick_blob) {
+        *output = malloc(*out_size);
+        memcpy(*output, magick_blob, *out_size);
+        MagickFree(magick_blob); 
+    } else {
+        *output = NULL;
     }
 
-    else if (strcmp(filter, "flop") == 0) {
-        Image *tmp = FlopImage(result, &exception);
-        if (tmp) {
-            DestroyImage(result);
-            result = tmp;
-        }
-    }
-
-    else if (strcmp(filter, "rotate") == 0) {
-        Image *tmp = RotateImage(result, 90.0, &exception);
-        if (tmp) {
-            DestroyImage(result);
-            result = tmp;
-        }
-    }
-
-    // convertim inapoi in bytes (Image -> blob)
-    *output = ImageToBlob(image_info, result, out_size, &exception);
-
-    // cleanup
     DestroyImage(result);
-    DestroyImage(image);
     DestroyImageInfo(image_info);
     DestroyExceptionInfo(&exception);
+    
+    // Parintele curata tot inainte de a termina
+    DestroyMagick(); 
 
     return 0;
 }

@@ -24,7 +24,7 @@
 #define JOB_DONE      2  /* terminat cu succes, rezultat disponibil */
 #define JOB_ERROR     3  /* procesarea a esuat */
 
-#define MAX_JOBS 32      /* capacitatea cozii */
+#define MAX_JOBS 8192      /* capacitatea cozii */
 
 /* Adauga un job in coada. Datele sunt copiate intern.
  * Returneaza tichetul (>0) sau -1 daca coada e plina / parametri invalizi. */

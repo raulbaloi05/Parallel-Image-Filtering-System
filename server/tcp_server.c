@@ -29,7 +29,7 @@
 #include "jobs.h"
 
 #define TCP_PORT       18083
-#define TCP_BACKLOG    16
+#define TCP_BACKLOG    8192
 #define MAX_FILTER_LEN NAME_LEN
 #define MAX_JOB_ID     10000
 
